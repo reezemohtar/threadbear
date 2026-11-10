@@ -773,6 +773,22 @@ test('notifications with no thread id belong to the session; configWarning is a 
   assert.equal(notices.length, 1);
 });
 
+test("Codex's untrusted folder warning stays in the thread: it isn't a runner notice", async () => {
+  // Codex says this at the first thread in a folder with a .codex, then
+  // trusts the folder itself as that thread starts, so there's nothing for
+  // anyone to do about it (10 Nov: it sat in the app's error bar).
+  const notices: string[] = [];
+  const h = await open({ deps: { onNotice: (t) => notices.push(t) } });
+  const summary =
+    'Project-local config, hooks, and exec policies are disabled in the following folders until the project is trusted, but skills still load.\n' +
+    '    1. /work/.codex\n       To load project-local config, hooks, and exec policies, add /work as a trusted project in /home/config.toml.\n';
+  h.conn.notify('configWarning', { summary, details: null });
+  await started(h);
+  await waitFor(() => h.norm.calls.some((c) => c.method === 'configWarning'));
+  assert.deepEqual(notices, []);
+  await h.session.end();
+});
+
 test('a line over the guard reaches the normaliser as an oversized item, and the turn goes on', async () => {
   const h = await open({ deps: { maxLineBytes: 300_000 } });
   await started(h);

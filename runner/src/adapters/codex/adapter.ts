@@ -659,7 +659,9 @@ export class CodexSession implements AgentSession {
     if (method === 'account/rateLimits/updated') return this.toNormalizer(method, this.rateLimits.update(p));
     if (method === 'configWarning') {
       const text = [p.summary, p.details].filter((x) => typeof x === 'string' && x).join(': ');
-      if (text) this.hooks.notice(`Codex config: ${text}`);
+      // An untrusted folder isn't a broken config: Codex trusts it itself
+      // as the thread starts, so that one is only a note in the thread.
+      if (text && !/until the project is trusted/i.test(text)) this.hooks.notice(`Codex config: ${text}`);
     }
     this.toNormalizer(method, p);
   }
