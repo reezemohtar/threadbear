@@ -198,6 +198,29 @@ export function startFolder(live: BotProject | null | undefined): string | undef
 }
 
 /**
+ * The selected bot's project as its live query answers: still checking, an
+ * answer (null: the project has gone), or failed. A failure is not an
+ * answer, so nothing can be started from it; the page says so and offers to
+ * try again, rather than sitting at "checking".
+ */
+export function liveOf(answer: BotProject | null | Error | undefined): { state: 'checking' } | { state: 'failed' } | { state: 'known'; project: BotProject | null } {
+  if (answer === undefined) return { state: 'checking' };
+  if (answer instanceof Error) return { state: 'failed' };
+  return { state: 'known', project: answer };
+}
+
+/**
+ * Whether an error is the page's own code failing to arrive (offline, or the
+ * site was updated since the tab opened), going by what browsers say for a
+ * failed import. Anything else is a fault in the page, and is worded as one.
+ */
+export function isLoadFailure(error: unknown): boolean {
+  const e = error as { name?: unknown; message?: unknown } | null;
+  const text = `${typeof e?.name === 'string' ? e.name : ''} ${typeof e?.message === 'string' ? e.message : String(error)}`;
+  return /ChunkLoadError|dynamically imported module|Importing a module script failed|Failed to fetch|Load failed|Unable to preload/i.test(text);
+}
+
+/**
  * Lets one call through at a time: a second while the first is still going
  * is dropped (`ran: false`), so a double click or a held Return can't start
  * the same thing twice. A failure frees it for the next try.

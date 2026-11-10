@@ -36,15 +36,29 @@ export function useQuery(query: FunctionReference<'query'>, args?: unknown): unk
 }
 
 export function useQueries(asks: Record<string, { query: FunctionReference<'query'>; args: unknown }>): Record<string, unknown> {
-  return useMemo(() => Object.fromEntries(Object.entries(asks).map(([key, q]) => [key, ask(getFunctionName(q.query), q.args)])), [asks]);
+  return useMemo(() => {
+    if (FAILWATCH) {
+      for (const key of held) if (!(key in asks)) healed.add(key);
+      for (const key of Object.keys(asks)) held.add(key);
+    }
+    return Object.fromEntries(Object.entries(asks).map(([key, q]) => [key, FAILWATCH && getFunctionName(q.query) === 'phone:project' && !healed.has(key) ? new Error('mock: this watch failed') : ask(getFunctionName(q.query), q.args)]));
+  }, [asks]);
 }
 
 // For a stress run: ?slow=300 makes each one-off read take that long,
 // ?fail=30 makes that percentage of them fail the first time they're asked.
 // What was asked is counted on window.__mock, for a script to read.
+// ?failwatch=1 makes a watched project (useQueries) answer with an error
+// until the page lets go of it and asks again, as its Try again does.
 const params = new URLSearchParams(location.search);
 const SLOW = Number(params.get('slow')) || 0;
 const FAIL = Number(params.get('fail')) || 0;
+const FAILWATCH = params.has('failwatch');
+// Read by the dev server (vite.config.ts), and cleared by any load without the flag.
+document.cookie = `mockfailpage=${params.has('failpage') ? 1 : 0}; path=/`;
+// Watched keys that have been let go of at least once since first asked.
+const held = new Set<string>();
+const healed = new Set<string>();
 const counts = { reads: 0, atOnce: 0, mostAtOnce: 0, failed: 0, mutations: [] as string[] };
 (window as unknown as { __mock: typeof counts }).__mock = counts;
 const tried = new Set<string>();

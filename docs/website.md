@@ -142,7 +142,9 @@ To look at a page with no backend and no sign-in, `npx vite --config
 web/mock/vite.config.ts` serves the same site on made-up data at
 `localhost:5182` (`web/mock/`: `convex/react` swapped for a stand-in that
 answers from `data.ts`; mutations do nothing). Add `?theme=dark` or
-`?theme=light`.
+`?theme=light`. It can also be made big, slow or failing on purpose
+(`?stress=`, `?slow=`, `?fail=`, `?failwatch=1`, `?failpage=1`; its
+`vite.config.ts` says what each does).
 
 ## The Bots page (an experiment)
 

@@ -15,6 +15,7 @@ function slow() {
       waiting.push({ key, resolve, reject });
       most = Math.max(most, waiting.length);
     });
+  const outNow = () => waiting.length;
   const settle = async (key: string, value: string | null | Error) => {
     const at = waiting.findIndex((x) => x.key === key);
     const w = waiting.splice(at, 1)[0]!;
@@ -22,7 +23,7 @@ function slow() {
     else w.resolve(value);
     await new Promise((r) => setImmediate(r));
   };
-  return { read, settle, asked, waiting, most: () => most };
+  return { read, settle, asked, waiting, most: () => most, outNow };
 }
 
 test('projects are read a few at a time, each once', async () => {
@@ -42,7 +43,7 @@ test('projects are read a few at a time, each once', async () => {
   assert.equal(loader.done(), true);
   assert.equal(b.most(), 2);
   assert.deepEqual([...loader.known()], [['a', 'A'], ['b', 'B'], ['c', 'C'], ['d', 'D'], ['e', 'E']]);
-  assert.equal(changes, 5);
+  assert.equal(changes, 6, 'the list arriving, then five answers');
   loader.want(['a', 'b', 'c', 'd', 'e']);
   assert.equal(b.asked.length, 5, 'nothing is read twice');
 });
@@ -88,11 +89,11 @@ test('a fresher copy from a live query replaces what was read, and nothing lands
   loader.put('a', 'A2');
   loader.put('a', 'A2');
   assert.equal(loader.known().get('a'), 'A2');
-  assert.equal(changes, 2, 'the same copy again is not a change');
+  assert.equal(changes, 3, 'the list, the answer, the fresher copy; the same copy again is not a change');
   loader.stop();
   await b.settle('b', 'B');
   assert.equal(loader.known().has('b'), false);
-  assert.equal(changes, 2);
+  assert.equal(changes, 3);
   // Set up again (React runs an effect, its cleanup, then the effect again while developing).
   loader.start();
   assert.deepEqual(b.asked, ['a', 'b', 'b'], 'what was dropped is read again');
@@ -147,9 +148,9 @@ test('removed and listed again while the first read is still out: only the newer
   loader.want(['x']);
   loader.want([]);
   loader.want(['x']);
-  assert.deepEqual(b.asked, ['x', 'x']);
   await b.settle('x', 'first, stale');
   assert.equal(loader.known().has('x'), false, 'the first read is no longer the one waited on');
+  assert.deepEqual(b.asked, ['x', 'x']);
   await b.settle('x', 'second');
   assert.equal(loader.known().get('x'), 'second');
 });
@@ -178,10 +179,61 @@ test('a copy with the same content is not a change, with the page saying what sa
   const loader = projectLoader<{ title: string }>(async () => ({ title: 'A' }), () => changes++, 4, (x, y) => JSON.stringify(x) === JSON.stringify(y));
   loader.want(['a']);
   await new Promise((r) => setImmediate(r));
-  assert.equal(changes, 1);
-  loader.put('a', { title: 'A' });
-  assert.equal(changes, 1);
-  loader.put('a', { title: 'A2' });
   assert.equal(changes, 2);
+  loader.put('a', { title: 'A' });
+  assert.equal(changes, 2);
+  loader.put('a', { title: 'A2' });
+  assert.equal(changes, 3);
   void b;
+});
+
+test('taking away the last project still being read tells the page it is done', async () => {
+  const b = slow();
+  let changes = 0;
+  const loader = projectLoader(b.read, () => changes++, 4);
+  loader.want(['a', 'slow']);
+  await b.settle('a', 'A');
+  assert.equal(loader.done(), false);
+  const before = changes;
+  // 'slow' has no value yet, only a read out: removing it used to say nothing.
+  loader.want(['a']);
+  assert.equal(loader.done(), true);
+  assert.equal(changes, before + 1, 'the page hears, so Loading does not linger');
+  loader.want(['a']);
+  assert.equal(changes, before + 1, 'the same list again is no change');
+  // Adding one is a change too: done() goes back to false.
+  loader.want(['a', 'new']);
+  assert.equal(changes, before + 2);
+});
+
+test('never more requests out than the cap, even when reads are dropped and asked again', async () => {
+  const b = slow();
+  const loader = projectLoader(b.read, () => {}, 1);
+  loader.want(['x']);
+  loader.want([]);
+  loader.want(['x']);
+  assert.equal(b.outNow(), 1, 'the dropped read is still out, so the new one waits');
+  assert.deepEqual(b.asked, ['x']);
+  await b.settle('x', 'stale');
+  assert.equal(loader.known().has('x'), false, 'the dropped answer is still refused');
+  assert.deepEqual(b.asked, ['x', 'x'], 'and now the new read goes out');
+  assert.equal(b.outNow(), 1);
+  await b.settle('x', 'fresh');
+  assert.equal(loader.known().get('x'), 'fresh');
+  assert.equal(b.most(), 1);
+});
+
+test('stopping and starting again (as React does while developing) stays within the cap', async () => {
+  const b = slow();
+  const loader = projectLoader(b.read, () => {}, 4);
+  loader.want(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  loader.stop();
+  loader.start();
+  assert.equal(b.outNow(), 4, 'not eight');
+  for (const k of ['a', 'b', 'c', 'd']) await b.settle(k, k.toUpperCase());
+  assert.equal(b.most(), 4);
+  // The first four answers were dropped by the stop, so they are read again, four at a time.
+  while (b.outNow()) await b.settle(b.waiting[0]!.key, 'v');
+  assert.equal(loader.done(), true);
+  assert.equal(b.most(), 4);
 });

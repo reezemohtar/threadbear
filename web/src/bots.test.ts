@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
+import { allBots, belongs, isLoadFailure, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -256,4 +256,31 @@ test('only the fields the page uses are kept of a project', () => {
   assert.deepEqual(Object.keys(kept).sort(), ['folders', 'goals', 'id', 'lastActivityAt', 'runnerId', 'title']);
   assert.equal(JSON.stringify(kept).includes('private notes'), false);
   assert.deepEqual(buildBots([kept], []).business.map((b) => b.role), ['Routes work']);
+});
+
+test("a failed check of the selected bot's project is said, and never starts a chat", () => {
+  assert.deepEqual(liveOf(undefined), { state: 'checking' });
+  assert.deepEqual(liveOf(new Error('offline')), { state: 'failed' });
+  assert.deepEqual(liveOf(null), { state: 'known', project: null });
+  const juno = project('juno');
+  assert.deepEqual(liveOf(juno), { state: 'known', project: juno });
+  // Whatever the state, a chat starts only from a known project with a bots folder.
+  const folder = (a: Parameters<typeof liveOf>[0]) => {
+    const l = liveOf(a);
+    return startFolder(l.state === 'known' ? l.project : undefined);
+  };
+  assert.equal(folder(new Error('offline')), undefined, 'fails closed');
+  assert.equal(folder(undefined), undefined);
+  assert.equal(folder(null), undefined);
+  assert.equal(folder(juno), '/Users/me/work/bots/juno');
+});
+
+test("the page's code failing to arrive is told apart from a fault in the page", () => {
+  assert.equal(isLoadFailure(new TypeError('Failed to fetch dynamically imported module: http://x/src/bots-page.tsx')), true);
+  assert.equal(isLoadFailure(new TypeError('Importing a module script failed.')), true);
+  assert.equal(isLoadFailure(Object.assign(new Error('Loading chunk 7 failed'), { name: 'ChunkLoadError' })), true);
+  assert.equal(isLoadFailure(new TypeError("Cannot read properties of undefined (reading 'title')")), false);
+  assert.equal(isLoadFailure(new Error('boom')), false);
+  assert.equal(isLoadFailure('a string'), false);
+  assert.equal(isLoadFailure(null), false);
 });

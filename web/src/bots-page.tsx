@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, buildBots, chatFor, COLORS, isLive, namedChat, readBotId, singleFlight, slimProject, startFolder, threadsOf, watchKeys, type Bot, type BotProject, type BotThread } from './bots';
+import { allBots, botFolder, botPath, buildBots, chatFor, COLORS, isLive, liveOf, namedChat, readBotId, singleFlight, slimProject, startFolder, threadsOf, watchKeys, type Bot, type BotProject, type BotThread } from './bots';
 import { projectLoader } from './bots-loader';
 import { Avatar } from './bots-avatar';
 import * as Icon from './icons';
@@ -42,10 +42,12 @@ type Projects = {
   // How many couldn't be read, and trying those again.
   failed: number;
   retry: () => void;
-  // The selected bot's project as the live query has it now: undefined until
-  // it answers, null if it has gone. A new chat starts from this, never from
-  // what was read earlier.
-  live: BotProject | null | undefined;
+  // The selected bot's project as the live query has it now (liveOf):
+  // checking, known (null if it has gone) or failed. A new chat starts from
+  // this, never from what was read earlier.
+  live: ReturnType<typeof liveOf>;
+  // Asks for the selected bot's project again, after its live query failed.
+  recheck: () => void;
 };
 
 // Every project's folders and goals, as which ones are bots is in their
@@ -82,7 +84,17 @@ function useProjects(token: string, botId: string | undefined): Projects {
   const known = loader.known();
   const bots = [...known].flatMap(([key, p]) => (p && !p.archived && botFolder(p.folders) ? [key] : []));
   const selected = botId ? bots.find((key) => known.get(key)?.id === botId) : undefined;
-  const watchKey = away ? '' : watchKeys(selected, bots, WATCHED).join('\n');
+  // Trying a failed watch again: it's let go for one render and then asked
+  // for afresh, as a query that has failed stays failed while it's held.
+  const [letGo, setLetGo] = useState<string>();
+  useEffect(() => {
+    if (letGo) setLetGo(undefined);
+  }, [letGo]);
+  const watchKey = away
+    ? ''
+    : watchKeys(selected, bots, WATCHED)
+        .filter((key) => key !== letGo)
+        .join('\n');
   const watching = useMemo(() => {
     const out: Record<string, { query: typeof api.phone.project; args: ReturnType<typeof projectArgs> }> = {};
     for (const key of watchKey ? watchKey.split('\n') : []) out[key] = { query: api.phone.project, args: projectArgs(token, key) };
@@ -93,8 +105,7 @@ function useProjects(token: string, botId: string | undefined): Projects {
     for (const [key, value] of Object.entries(fresh)) if (value !== undefined && !(value instanceof Error)) loader.put(key, value && slimProject(value));
   }, [fresh, loader]);
 
-  const now = selected ? fresh[selected] : undefined;
-  return { projects: [...known.values()].flatMap((p) => p ?? []), done: !!heads && loader.done(), failed: loader.failed().length, retry: loader.retry, live: now instanceof Error ? undefined : now };
+  return { projects: [...known.values()].flatMap((p) => p ?? []), done: !!heads && loader.done(), failed: loader.failed().length, retry: loader.retry, live: liveOf(selected ? fresh[selected] : undefined), recheck: () => setLetGo(selected) };
 }
 
 // Re-renders every half minute so "5m" stays honest between updates.
@@ -120,7 +131,7 @@ type ThreadRow = BotThread & { title: string };
 
 export function BotsPage({ token, id, thread }: { token: string; id?: string; thread: (threadId: string, back: string) => ReactNode }) {
   const { botId, threadId: asked } = readBotId(id);
-  const { projects, done, failed, retry, live } = useProjects(token, botId);
+  const { projects, done, failed, retry, live, recheck } = useProjects(token, botId);
   const inbox = useInbox();
   const asleep = useLiveQuery(api.phone.threads, { token, view: 'hibernating' });
   const [pane, setPane] = useState(() => localStorage.getItem(PANE_KEY) !== '0');
@@ -224,7 +235,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
           ) : asked ? (
             <NotItsChat bot={bot} checking={named === 'checking'} />
           ) : (
-            <NoChat key={bot.id} token={token} bot={bot} live={live} />
+            <NoChat key={bot.id} token={token} bot={bot} live={live} recheck={recheck} />
           )}
         </section>
       ) : (
@@ -338,7 +349,7 @@ function NotItsChat({ bot, checking }: { bot: Bot; checking: boolean }) {
 // and runner are the project's as the live query has them now (`live`,
 // startFolder), not as read when the page opened: until that has answered,
 // and if the project is no longer a bot, nothing can be started.
-function NoChat({ token, bot, live }: { token: string; bot: Bot; live: BotProject | null | undefined }) {
+function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: ReturnType<typeof liveOf>; recheck: () => void }) {
   const create = useMutation(api.phone.create);
   const [text, setText] = useState('');
   const [starting, setStarting] = useState(false);
@@ -353,15 +364,16 @@ function NoChat({ token, bot, live }: { token: string; bot: Bot; live: BotProjec
   // backend has answered, and Return pressed twice before then would
   // otherwise queue two chats.
   const start = useMemo(() => singleFlight((body: string, cwd: string, runnerId: string) => create({ token, text: body, cwd, runnerId })), [create, token]);
-  const folder = startFolder(live);
+  const project = live.state === 'known' ? live.project : undefined;
+  const folder = startFolder(project);
   const busy = starting || !!pending;
   const submit = async () => {
     const body = text.trim();
-    if (!body || busy || !live || !folder) return;
+    if (!body || busy || !project || !folder) return;
     setStarting(true);
     setError('');
     try {
-      const made = await start(body, folder, live.runnerId);
+      const made = await start(body, folder, project.runnerId);
       if (made.ran) setPending(made.value);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -376,7 +388,20 @@ function NoChat({ token, bot, live }: { token: string; bot: Bot; live: BotProjec
         <Avatar look={bot.look} size={64} />
         <h2>{bot.title}</h2>
         {bot.role ? <p>{bot.role}</p> : null}
-        <p className="quiet">{live === undefined ? 'No open chat. Checking this bot’s folder…' : folder ? 'No open chat. Send a message to start one.' : 'No open chat, and this project no longer has a folder inside a bots folder, so one can’t be started here.'}</p>
+        {live.state === 'failed' ? (
+          <>
+            <p className="quiet" role="alert">
+              No open chat. This bot’s folder couldn’t be checked, so one can’t be started yet.
+            </p>
+            <p>
+              <button className="btn" title="Check this bot's folder again" onClick={recheck}>
+                Try again
+              </button>
+            </p>
+          </>
+        ) : (
+          <p className="quiet">{live.state === 'checking' ? 'No open chat. Checking this bot’s folder…' : folder ? 'No open chat. Send a message to start one.' : 'No open chat, and this project no longer has a folder inside a bots folder, so one can’t be started here.'}</p>
+        )}
       </div>
       <div className="dock">
         {error ? (
@@ -409,7 +434,7 @@ function NoChat({ token, bot, live }: { token: string; bot: Bot; live: BotProjec
               }}
             />
             <div className="tools-row">
-              <button className="send" disabled={!text.trim() || busy || !folder} aria-label="Start the chat" title={busy ? 'Starting the chat' : folder ? `Start the chat in ${folder}` : 'Waiting for this bot’s folder'}>
+              <button className="send" disabled={!text.trim() || busy || !folder} aria-label="Start the chat" title={busy ? 'Starting the chat' : folder ? `Start the chat in ${folder}` : live.state === 'failed' ? 'This bot’s folder couldn’t be checked' : 'Waiting for this bot’s folder'}>
                 {busy ? <span className="spinner" /> : <Icon.Up />}
               </button>
             </div>

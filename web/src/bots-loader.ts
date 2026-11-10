@@ -34,23 +34,30 @@ export function projectLoader<P>(read: (key: string) => Promise<P | null>, chang
   // (or removed and listed again) is dropped.
   const reading = new Map<string, number>();
   let reads = 0;
+  // Requests really out, whether or not their answer is still wanted: a read
+  // can be dropped but not called back, so this, not `reading`, is what
+  // `atOnce` holds to.
+  let out = 0;
   let stopped = false;
 
   const land = (key: string, mine: number, apply: () => void) => {
-    if (reading.get(key) !== mine) return;
-    reading.delete(key);
-    apply();
-    changed();
+    out--;
+    if (reading.get(key) === mine) {
+      reading.delete(key);
+      apply();
+      changed();
+    }
     pump();
   };
 
   const pump = () => {
     if (stopped) return;
     for (const key of wanted) {
-      if (reading.size >= atOnce) return;
+      if (out >= atOnce) return;
       if (values.has(key) || failed.has(key) || reading.has(key)) continue;
       const mine = ++reads;
       reading.set(key, mine);
+      out++;
       read(key).then(
         (value) => land(key, mine, () => values.set(key, value)),
         () => land(key, mine, () => failed.add(key)),
@@ -60,19 +67,19 @@ export function projectLoader<P>(read: (key: string) => Promise<P | null>, chang
 
   return {
     want(keys) {
-      wanted = keys;
+      const before = new Set(wanted);
       const now = new Set(keys);
-      let fewer = false;
-      for (const key of [...values.keys()]) {
-        if (now.has(key)) continue;
-        values.delete(key);
-        fewer = true;
-      }
+      // Any change to which projects are wanted can change what known(),
+      // done() and failed() say (taking away the last one still being read
+      // makes done() true), so the page is told of every one.
+      let differs = before.size !== now.size || keys.some((key) => !before.has(key));
+      wanted = keys;
+      for (const key of [...values.keys()]) if (!now.has(key)) values.delete(key);
       for (const key of [...reading.keys()]) if (!now.has(key)) reading.delete(key);
       // A read that failed gets another go each time the list changes.
-      if (failed.size) fewer = true;
+      if (failed.size) differs = true;
       failed.clear();
-      if (fewer) changed();
+      if (differs) changed();
       pump();
     },
     put(key, value) {
