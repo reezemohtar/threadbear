@@ -7,7 +7,9 @@ import react from '@vitejs/plugin-react';
 //
 //     npx vite --config web/mock/vite.config.ts
 //
-// then http://localhost:5182/bots (add ?theme=dark or ?theme=light). It is
+// then http://localhost:5182/bots (add ?theme=dark or ?theme=light; for a
+// stress run ?stress=200 adds that many bots, ?slow=150 makes each one-off
+// read take that long, ?fail=30 fails that share of them once). It is
 // the real site (web/src) with `convex/react` swapped for convex-react.tsx
 // beside this, which answers from data.ts. Dev server only: there is no
 // build of it.

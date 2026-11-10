@@ -20,9 +20,21 @@ const BOTS: Bot[] = [
   { id: 'odo-0005', title: 'Odo · Travel', goals: 'Section: Personal\nPlans trips and keeps the bookings in one place' },
   { id: 'site-0001', title: 'Website', goals: 'Not a bot: an ordinary project', folder: '/Users/me/dev/site' },
 ];
-const folderOf = (b: Bot) => b.folder ?? `/Users/me/work/bots/${b.id.split('-')[0]}`;
+// A stress run (?stress=200): that many more bots, twice as many ordinary
+// projects, three chats a bot and long notes on every project, to see how
+// the page holds up on a big account. Still all made up.
+const STRESS = Math.max(0, Math.min(2000, Number(new URLSearchParams(location.search).get('stress')) || 0));
+for (let i = 0; i < STRESS; i++) {
+  const k = String(i).padStart(4, '0');
+  BOTS.push({ id: `sb-${k}`, title: `Bot ${k} · Stress`, goals: `${i % 5 === 0 ? 'Section: Personal\n' : ''}Made-up bot number ${i} for the stress run` });
+  BOTS.push({ id: `sp-${k}a`, title: `Project ${k}a`, goals: 'Not a bot', folder: `/Users/me/dev/p${k}a` });
+  BOTS.push({ id: `sp-${k}b`, title: `Project ${k}b`, goals: 'Not a bot', folder: `/Users/me/dev/p${k}b` });
+}
+const NOTES = STRESS ? 'Made-up notes, long on purpose. '.repeat(160) : '';
 
-const projects = BOTS.map((b) => ({ runnerId: 'r1', id: b.id, title: b.title, folders: [folderOf(b)], goals: b.goals, state: '', notes: '', createdBy: 'user', archived: false, createdAt: iso(NOW - 30 * 24 * 60 * MIN), updatedAt: iso(NOW - 3 * 24 * 60 * MIN), threadCount: 2 }));
+const folderOf = (b: Bot) => b.folder ?? `/Users/me/work/bots/${b.id.startsWith('sb-') ? b.id : b.id.split('-')[0]}`;
+
+const projects = BOTS.map((b) => ({ runnerId: 'r1', id: b.id, title: b.title, folders: [folderOf(b)], goals: b.goals, state: '', notes: NOTES, createdBy: 'user', archived: false, createdAt: iso(NOW - 30 * 24 * 60 * MIN), updatedAt: iso(NOW - 3 * 24 * 60 * MIN), threadCount: 2 }));
 
 type Thread = Record<string, unknown> & { threadId: string; lastActivityMs: number; projects: { id: string; title: string }[] };
 let n = 0;
@@ -59,6 +71,15 @@ const threads: Thread[] = [
   thread('site-0001', 'Landing page copy', 'Draft two is up.', 30),
 ];
 
+for (let i = 0; i < STRESS; i++) {
+  // One bot in four has no open chat.
+  if (i % 4 === 0) continue;
+  const id = `sb-${String(i).padStart(4, '0')}`;
+  const state = i % 7 === 0 ? { needsYou: true, needs: 'you', asksSeq: 4, asks: [{ action: `Approve the made-up step for bot ${i}?`, options: ['Yes', 'Not now'] }] } : i % 5 === 0 ? { status: 'running', working: 'Working on a made-up job' } : i % 3 === 0 ? { unread: true } : {};
+  threads.push(thread(id, `Chat one of bot ${i}`, `Latest line from bot ${i}, long enough to need cutting short in the row.`, 5 + i, state));
+  threads.push(thread(id, `Chat two of bot ${i}`, 'An older chat.', 600 + i, i % 11 === 0 ? { starredAt: iso(NOW - 60 * MIN) } : {}));
+}
+
 const archived: Thread[] = [thread('juno-0008', 'Bot roster', 'All ten bots listed.', 9 * 24 * 60, { view: 'den', archivedAt: iso(NOW - 8 * 24 * 60 * MIN) })];
 
 type Message = { seq: number; role: 'user' | 'assistant'; text: string; at: string };
@@ -79,7 +100,9 @@ const chats: Record<string, Message[]> = {
 };
 const chatOf = (threadId: string): Message[] => {
   const t = [...threads, ...archived].find((x) => x.threadId === threadId);
-  return chats[threadId] ?? say([['user', 'How is it going?'], ['assistant', String(t?.preview ?? 'All quiet.')]]);
+  if (chats[threadId]) return chats[threadId]!;
+  if (STRESS) return say(Array.from({ length: 60 }, (_, i): [Message['role'], string] => (i % 2 ? ['assistant', `Reply ${i} in ${t?.title}.\n\n- one made-up point\n- another, with \`code\`\n\n| a | b |\n|---|---|\n| 1 | 2 |`] : ['user', `Question ${i} for ${t?.title}?`])));
+  return say([['user', 'How is it going?'], ['assistant', String(t?.preview ?? 'All quiet.')]]);
 };
 
 export function answer(name: string, args: Record<string, unknown>): unknown {

@@ -39,12 +39,29 @@ export function useQueries(asks: Record<string, { query: FunctionReference<'quer
   return useMemo(() => Object.fromEntries(Object.entries(asks).map(([key, q]) => [key, ask(getFunctionName(q.query), q.args)])), [asks]);
 }
 
+// For a stress run: ?slow=300 makes each one-off read take that long,
+// ?fail=30 makes that percentage of them fail the first time they're asked.
+// What was asked is counted on window.__mock, for a script to read.
+const params = new URLSearchParams(location.search);
+const SLOW = Number(params.get('slow')) || 0;
+const FAIL = Number(params.get('fail')) || 0;
+const counts = { reads: 0, atOnce: 0, mostAtOnce: 0, failed: 0, mutations: [] as string[] };
+(window as unknown as { __mock: typeof counts }).__mock = counts;
+const tried = new Set<string>();
+const unlucky = (key: string) => {
+  let h = 7;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h % 100 < FAIL;
+};
+
 const mutations = new Map<string, (args: unknown) => Promise<string>>();
 export function useMutation(mutation: FunctionReference<'mutation'>) {
   const name = getFunctionName(mutation);
   if (!mutations.has(name)) {
     mutations.set(name, async (args) => {
       console.log('mock mutation', name, args);
+      counts.mutations.push(name);
+      if (SLOW) await new Promise((r) => setTimeout(r, SLOW));
       return 'mock-command';
     });
   }
@@ -52,7 +69,25 @@ export function useMutation(mutation: FunctionReference<'mutation'>) {
 }
 
 // One client, as the real one is: hooks key their work on it.
-const client = { query: async (query: FunctionReference<'query'>, args: unknown) => ask(getFunctionName(query), args) };
+const client = {
+  query: async (query: FunctionReference<'query'>, args: unknown) => {
+    const name = getFunctionName(query);
+    const key = `${name} ${JSON.stringify(args)}`;
+    counts.reads++;
+    counts.mostAtOnce = Math.max(counts.mostAtOnce, ++counts.atOnce);
+    try {
+      if (SLOW) await new Promise((r) => setTimeout(r, SLOW));
+      if (FAIL && !tried.has(key) && unlucky(key)) {
+        tried.add(key);
+        counts.failed++;
+        throw new Error('mock: this read failed');
+      }
+      return ask(name, args);
+    } finally {
+      counts.atOnce--;
+    }
+  },
+};
 export function useConvex() {
   return client;
 }
