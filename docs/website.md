@@ -138,6 +138,27 @@ The dev deployment has no threads unless a dev runner mirrors to it, so for
 a real look use prod data with a throwaway token (`--name web-test --days 1`,
 revoke after).
 
+To look at a page with no backend and no sign-in, `npx vite --config
+web/mock/vite.config.ts` serves the same site on made-up data at
+`localhost:5182` (`web/mock/`: `convex/react` swapped for a stand-in that
+answers from `data.ts`; mutations do nothing). Add `?theme=dark` or
+`?theme=light`.
+
+## The Bots page (an experiment)
+
+`/bots` is one row per bot rather than per thread (`web/src/bots-page.tsx`,
+rules in `bots.ts`, look in `bots.css`; docs/experiments.md, `bots`). It's
+off until a browser opens the site with `?experiment=bots`, which that
+browser remembers. It needs nothing new from the backend: a bot is a
+project with a folder inside a folder named `bots`, read from
+`phone:project` for each project while the page shows (the list,
+`phone:projects`, leaves folders and goals out); its section is a
+`Section: Personal` line in its goals, its role the first other line; it's
+pinned while one of its open threads is starred; and its threads are the
+inbox's and the hibernating ones in the project or in its folder. The chat
+is `ThreadView` from `App.tsx`, so sending and the cards are the same code.
+A bot's shape and colour come from its project's id (`lookOf`).
+
 **Deploying:** `npm run web:deploy` runs `convex deploy` (prod) and then
 uploads `web/dist`. It asks before pushing to prod; from an agent, answer
 through a pseudo-terminal (`(sleep 40; printf 'y\r') | script -q /dev/null

@@ -15,6 +15,8 @@ import { signOut } from './token';
 import { day } from './format';
 import { isOnline, runnersShown, runnerState } from './view-logic';
 import * as Icon from './icons';
+import { botsOn } from './bots';
+import { BotsIcon } from './bots-avatar';
 
 // Where Threads goes back to: the thread last open, so a trip to Scheduled and
 // back lands where it started. On a phone, the list.
@@ -68,6 +70,7 @@ export function Rail({ token, route }: { token: string; route: Route }) {
       </a>
       {view('scheduled', 'Scheduled', <Icon.Clock />, active)}
       {view('projects', 'Projects', <Icon.Stack />)}
+      {botsOn() ? view('bots', 'Bots', <BotsIcon />) : null}
       <span className="grow" />
       {runnersShown(runners ?? [], now).map((r) => (
         <a

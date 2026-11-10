@@ -1,0 +1,237 @@
+// Bots (experiment `bots`; the page is bots-page.tsx): which projects are
+// bots, the sections they go in, each one's row and its look. Nothing here
+// touches Convex or the page, so it can be tested alone:
+// node --test web/src/bots.test.ts
+//
+// A bot is a project. With no schema of its own yet, everything it needs
+// comes from what the phone's API already carries:
+// - It's a bot when one of its folders sits inside a folder named `bots`
+//   (".../bots/juno"), and the folder's own name doesn't start with `_` or
+//   `.` (so ".../bots/_shared" isn't one, and ".../bots/_test/juno" is).
+// - Its section is Business unless its goals have a line "Section: Personal".
+// - Its role line is the first other line of its goals.
+// - It's pinned while one of its open threads is starred.
+// - Its threads are the ones in the project, and any whose folder is the
+//   bot's own, so a chat started from this page counts before it has joined.
+import { plain } from './format.ts';
+
+export type BotProject = { runnerId: string; id: string; title: string; folders: string[]; goals: string; archived?: boolean; updatedAt?: string; lastActivityAt?: string };
+
+// The fields of a thread's row (phone:threads) this reads.
+export type BotThread = {
+  threadId: string;
+  title: string;
+  cwd: string;
+  status: string;
+  needsYou: boolean;
+  unread: boolean;
+  preview: string;
+  lastActivityMs: number;
+  view?: string;
+  archivedAt?: string;
+  starredAt?: string;
+  working?: string;
+  projects?: { id: string }[];
+  asks?: { action: string }[];
+  pendingApproval?: unknown;
+};
+
+export type Section = 'business' | 'personal';
+export type BotStatus = 'needs' | 'working' | 'failed' | 'idle';
+
+export const SHAPES = ['circle', 'squircle', 'hexagon', 'octagon', 'diamond', 'shield', 'pill', 'arch', 'drop', 'ticket', 'pentagon', 'gem'] as const;
+export type Shape = (typeof SHAPES)[number];
+// Fills from the design spec's hues. `black` turns to near-white in dark
+// (bots.css), as a black shape on a black list can't be seen.
+export const COLORS = { black: '#1c1c1c', red: '#e72e3b', orange: '#ee620d', amber: '#da830e', green: '#10ab61', cyan: '#10a693', blue: '#1680f3', violet: '#8351e4', magenta: '#e52f8b', gray: '#7d7d82', brown: '#9d6937' } as const;
+export type Color = keyof typeof COLORS;
+export type Look = { shape: Shape; color: Color };
+
+export type Bot = {
+  // The project's id, which is also what the page's address carries.
+  id: string;
+  runnerId: string;
+  title: string;
+  role: string;
+  folder: string;
+  section: Section;
+  pinned: boolean;
+  look: Look;
+  status: BotStatus;
+  // One line under the name: what it's asking, what it's doing, or the start
+  // of its last reply.
+  line: string;
+  unread: number;
+  // When it was last active, for the row's time and the order.
+  at: number;
+  // Its newest open thread, which is the chat a click opens.
+  threadId?: string;
+};
+
+const segments = (path: string) => path.split('/').filter(Boolean);
+
+/** The first of a project's folders that makes it a bot, if any. */
+export function botFolder(folders: string[]): string | undefined {
+  return folders.find((f) => {
+    const parts = segments(f);
+    const name = parts.at(-1) ?? '';
+    return parts.slice(0, -1).includes('bots') && !/^[_.]/.test(name);
+  });
+}
+
+const SECTION_LINE = /^\s*section\s*:\s*(business|personal)\s*\.?\s*$/i;
+
+export function sectionOf(goals: string): Section {
+  for (const line of goals.split('\n')) {
+    const m = line.match(SECTION_LINE);
+    if (m) return m[1]!.toLowerCase() as Section;
+  }
+  return 'business';
+}
+
+/** A bot's role: the first line of its goals that isn't the section line. */
+export function roleOf(goals: string): string {
+  for (const line of goals.split('\n')) {
+    if (SECTION_LINE.test(line)) continue;
+    const text = plain(line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ''));
+    if (text) return text;
+  }
+  return '';
+}
+
+// FNV-1a: the same key always gives the same number, on any device.
+function hash(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** A bot's shape and colour, from its project's id until it can be picked. */
+export function lookOf(key: string): Look {
+  const h = hash(key);
+  const colors = Object.keys(COLORS) as Color[];
+  return { shape: SHAPES[h % SHAPES.length]!, color: colors[Math.floor(h / SHAPES.length) % colors.length]! };
+}
+
+const busy = (t: { status: string }) => t.status === 'running' || t.status === 'starting';
+const inside = (path: string, folder: string) => path === folder || path.startsWith(folder.replace(/\/+$/, '') + '/');
+
+export const isLive = (t: { archivedAt?: string; view?: string }) => !t.archivedAt && t.view !== 'den';
+
+/** A bot's threads out of these, newest first. */
+export function threadsOf<T extends BotThread>(bot: { id: string; folder: string }, threads: T[]): T[] {
+  const seen = new Set<string>();
+  return threads
+    .filter((t) => {
+      if (seen.has(t.threadId)) return false;
+      if (!t.projects?.some((p) => p.id === bot.id) && !inside(t.cwd, bot.folder)) return false;
+      seen.add(t.threadId);
+      return true;
+    })
+    .sort((a, b) => b.lastActivityMs - a.lastActivityMs);
+}
+
+/** The chat a click on the bot opens: its newest thread that isn't archived. */
+export function newestLive<T extends BotThread>(threads: T[]): T | undefined {
+  return threads.filter(isLive).sort((a, b) => b.lastActivityMs - a.lastActivityMs)[0];
+}
+
+const waiting = (t: BotThread) => t.needsYou || !!t.pendingApproval;
+
+/** What the row's dot says, from the bot's open threads: needs you wins. */
+export function statusOf(live: BotThread[]): BotStatus {
+  if (live.some(waiting)) return 'needs';
+  if (live.some(busy)) return 'working';
+  return newestLive(live)?.status === 'error' ? 'failed' : 'idle';
+}
+
+/** The one line under the name. No model writes it: it's the thread's own. */
+export function lineOf(live: BotThread[]): string {
+  const asking = live.filter(waiting).sort((a, b) => b.lastActivityMs - a.lastActivityMs)[0];
+  if (asking) return plain(asking.asks?.[0]?.action ?? '') || 'Waiting for your answer';
+  const working = live.filter(busy).sort((a, b) => b.lastActivityMs - a.lastActivityMs)[0];
+  if (working) return plain(working.working ?? '') || 'Working';
+  const newest = newestLive(live);
+  if (!newest) return 'No open chat';
+  if (newest.status === 'error') return 'The last turn failed';
+  return plain(newest.preview) || newest.title || 'No messages yet';
+}
+
+export type BotLists = { pinned: Bot[]; business: Bot[]; personal: Bot[] };
+
+/** Every bot among these projects, in the lists the page shows. */
+export function buildBots(projects: BotProject[], threads: BotThread[]): BotLists {
+  const out: BotLists = { pinned: [], business: [], personal: [] };
+  const seen = new Set<string>();
+  for (const p of projects) {
+    const folder = botFolder(p.folders);
+    if (!folder || p.archived || seen.has(p.id)) continue;
+    seen.add(p.id);
+    const live = threadsOf({ id: p.id, folder }, threads).filter(isLive);
+    const newest = live[0];
+    const last = Date.parse(p.lastActivityAt ?? p.updatedAt ?? '');
+    const bot: Bot = {
+      id: p.id,
+      runnerId: p.runnerId,
+      title: p.title,
+      role: roleOf(p.goals),
+      folder,
+      section: sectionOf(p.goals),
+      pinned: live.some((t) => !!t.starredAt),
+      look: lookOf(p.id),
+      status: statusOf(live),
+      line: lineOf(live),
+      unread: live.filter((t) => t.unread).length,
+      at: newest?.lastActivityMs ?? (Number.isFinite(last) ? last : 0),
+      ...(newest ? { threadId: newest.threadId } : {}),
+    };
+    (bot.pinned ? out.pinned : out[bot.section]).push(bot);
+  }
+  // Waiting on you first, then whoever spoke last. Pinned ones keep to their
+  // names, so a tile doesn't move under the pointer.
+  const order = (a: Bot, b: Bot) => Number(b.status === 'needs') - Number(a.status === 'needs') || b.at - a.at || a.title.localeCompare(b.title);
+  out.business.sort(order);
+  out.personal.sort(order);
+  out.pinned.sort((a, b) => a.title.localeCompare(b.title));
+  return out;
+}
+
+export const allBots = (lists: BotLists): Bot[] => [...lists.pinned, ...lists.business, ...lists.personal];
+
+// ------------------------------------------------------------ the address
+
+// "/bots/<projectId>" is a bot's newest chat, "/bots/<projectId>~<threadId>"
+// one of its others.
+export function readBotId(id: string | undefined): { botId?: string; threadId?: string } {
+  if (!id) return {};
+  const at = id.indexOf('~');
+  return at < 0 ? { botId: id } : { botId: id.slice(0, at), ...(id.slice(at + 1) ? { threadId: id.slice(at + 1) } : {}) };
+}
+
+export function botPath(botId?: string, threadId?: string): string {
+  if (!botId) return '/bots';
+  return `/bots/${encodeURIComponent(threadId ? `${botId}~${threadId}` : botId)}`;
+}
+
+// ------------------------------------------------------------ the switch
+
+// The page is an experiment, off unless this browser has turned it on: the
+// website has no way to read runner.json, so its switch is kept here.
+// "?experiment=bots" on any address turns it on, "?experiment=bots-off" off.
+export const BOTS_KEY = 'threadbear.experiments.bots';
+
+export function botsSwitch(search: string, saved: string | null): { on: boolean; save?: '1' | '0' } {
+  const asked = new URLSearchParams(search).get('experiment');
+  if (asked === 'bots') return { on: true, save: '1' };
+  if (asked === 'bots-off') return { on: false, save: '0' };
+  return { on: saved === '1' };
+}
+
+export function botsOn(): boolean {
+  const { on, save } = botsSwitch(location.search, localStorage.getItem(BOTS_KEY));
+  if (save && localStorage.getItem(BOTS_KEY) !== save) localStorage.setItem(BOTS_KEY, save);
+  return on;
+}

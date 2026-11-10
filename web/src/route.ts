@@ -1,11 +1,12 @@
 // A few pages, so no router: "/" is the list, "/t/<threadId>" a thread,
 // "/s/<slug>" a thread someone shared (no sign-in; share.tsx), "/new" a new
-// thread, and the rail's views with what's open in them. Static
+// thread, and the rail's views with what's open in them ("/bots" is the Bots
+// page, an experiment: bots.ts). Static
 // hosting sends every unknown path to index.html, so a link works when
 // opened cold.
 import { useSyncExternalStore } from 'react';
 
-export type RailView = 'scheduled' | 'projects' | 'runners' | 'usage';
+export type RailView = 'scheduled' | 'projects' | 'bots' | 'runners' | 'usage';
 export type Route = { page: 'list' } | { page: 'new' } | { page: 'thread'; threadId: string } | { page: 'share'; slug: string } | { page: RailView; id?: string };
 
 function parse(): Route {
@@ -14,7 +15,7 @@ function parse(): Route {
   const m = location.pathname.match(/^\/t\/([^/]+)\/?$/);
   if (m) return { page: 'thread', threadId: decodeURIComponent(m[1]) };
   if (/^\/new\/?$/.test(location.pathname)) return { page: 'new' };
-  const v = location.pathname.match(/^\/(scheduled|projects|runners|usage)(?:\/([^/]+))?\/?$/);
+  const v = location.pathname.match(/^\/(scheduled|projects|bots|runners|usage)(?:\/([^/]+))?\/?$/);
   if (v) return { page: v[1] as RailView, ...(v[2] ? { id: decodeURIComponent(v[2]) } : {}) };
   return { page: 'list' };
 }

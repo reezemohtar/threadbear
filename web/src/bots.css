@@ -1,0 +1,159 @@
+/* The Bots page (bots-page.tsx; experiment `bots`). Sizes and colours are
+   the Bots design's (round 5): a 280 px list of 54 px rows with 36 px
+   avatars, bubbles on a 760 px column, a 320 px details pane. Its own
+   tokens, all `--b-`, and nothing outside `.bots-shell` is touched, so the
+   rest of the site looks as it did. light-dark() follows the appearance the
+   gear menu sets (color-scheme, styles.css). */
+.bots-shell {
+  --b-elev: light-dark(#ffffff, #1f1f1f);
+  --b-pane: light-dark(#ffffff, #161616);
+  --b-side: light-dark(#f5f5f5, #0e0e0e);
+  --b-t1: light-dark(#1c1c1c, #f5f5f5);
+  --b-t2: light-dark(rgba(28, 28, 28, 0.68), rgba(245, 245, 245, 0.66));
+  --b-t3: light-dark(rgba(28, 28, 28, 0.56), rgba(245, 245, 245, 0.54));
+  --b-t4: light-dark(rgba(28, 28, 28, 0.4), rgba(245, 245, 245, 0.38));
+  --b-b1: light-dark(rgba(28, 28, 28, 0.24), rgba(245, 245, 245, 0.22));
+  --b-b2: light-dark(rgba(28, 28, 28, 0.12), rgba(245, 245, 245, 0.1));
+  --b-b3: light-dark(rgba(28, 28, 28, 0.08), rgba(245, 245, 245, 0.06));
+  --b-hover: light-dark(rgba(28, 28, 28, 0.06), rgba(245, 245, 245, 0.06));
+  --b-active: light-dark(rgba(28, 28, 28, 0.08), rgba(245, 245, 245, 0.08));
+  --b-fill2: light-dark(rgba(28, 28, 28, 0.06), rgba(245, 245, 245, 0.04));
+  --b-botb: light-dark(rgba(28, 28, 28, 0.06), rgba(245, 245, 245, 0.04));
+  --b-info: light-dark(#0b6dd3, #4d9bff);
+  --b-warn: light-dark(#da830e, #c8770c);
+  --b-warn-text: light-dark(#aa6300, #e28600);
+  --b-ok: light-dark(#10ab61, #0e9f5a);
+  --b-danger: light-dark(#e72e3b, #cf2b35);
+  --b-shadow: 0 2px 8px -1px light-dark(rgba(0, 0, 0, 0.05), transparent), 0 1px 2px light-dark(rgba(0, 0, 0, 0.03), transparent);
+  --b-black: light-dark(#1c1c1c, #f5f5f5);
+  --b-black-mark: light-dark(#ffffff, #161616);
+  /* The site's own names, so the rail and the thread view inside the page
+     take the same greys. */
+  --bg: var(--b-pane);
+  --side: var(--b-side);
+  --raised: var(--b-elev);
+  --fill: var(--b-active);
+  --hover: var(--b-hover);
+  --line: var(--b-b3);
+  --line-strong: var(--b-b2);
+  --text: var(--b-t1);
+  --muted: var(--b-t2);
+  --faint: var(--b-t3);
+  --code: var(--b-fill2);
+  --bubble: var(--b-botb);
+  background: var(--b-pane);
+}
+.bots { grid-column: 2 / -1; min-width: 0; min-height: 0; display: flex; color: var(--b-t1); font-size: 14px; line-height: 20px; }
+.bot-avatar { display: block; flex: none; }
+
+/* ---- the list */
+.bots-list { width: 280px; flex: none; min-height: 0; display: flex; flex-direction: column; background: var(--b-side); }
+.bots-bar { flex: none; height: 52px; display: flex; align-items: center; padding: 0 16px; }
+.bots-bar h1 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -0.008em; }
+.bots-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+.bots-note { padding: 8px; font-size: 13px; line-height: 18px; color: var(--b-t3); text-wrap: balance; }
+.bots-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); column-gap: 4px; row-gap: 12px; padding: 6px 4px; margin-bottom: 12px; }
+.bot-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 6px 2px 4px; border-radius: 10px; color: var(--b-t1); font-size: 12px; line-height: 16px; }
+.bot-tile-name { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bots-head { height: 30px; display: flex; align-items: center; padding: 8px 8px 6px; border-radius: 6px; font-size: 12px; line-height: 16px; color: var(--b-t2); }
+.bots-rows + .bots-head { margin-top: 8px; }
+.bots-head b { margin-left: auto; font-weight: 400; color: var(--b-t3); font-variant-numeric: tabular-nums; }
+.bots-rows { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
+.bot-row { height: 54px; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 10px; color: var(--b-t1); }
+.bot-row:hover, .bot-tile:hover { background: var(--b-hover); text-decoration: none; }
+.bot-row.on, .bot-tile.on { background: var(--b-active); }
+.bot-row:focus-visible, .bot-tile:focus-visible { outline: 2px solid var(--b-info); outline-offset: -2px; }
+.bot-av { position: relative; flex: none; display: block; }
+.bot-dot { position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--b-side); }
+.bot-tile .bot-dot { right: 2px; bottom: 2px; width: 10px; height: 10px; }
+.bot-dot.working { background: var(--b-ok); }
+.bot-dot.needs { background: var(--b-warn); }
+.bot-dot.failed { background: var(--b-danger); }
+.bot-text { flex: 1; min-width: 0; display: block; }
+.bot-top { display: flex; align-items: baseline; gap: 6px; }
+.bot-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bot-time { flex: none; font-size: 12px; line-height: 16px; color: var(--b-t3); font-variant-numeric: tabular-nums; }
+.bot-line { display: block; min-height: 18px; font-size: 13px; line-height: 18px; color: var(--b-t2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bot-line.needs { color: var(--b-warn-text); }
+.bot-line.failed { color: var(--b-danger); }
+/* Working: the line breathes. */
+.bot-line.working { animation: bots-working 1.8s ease-in-out infinite; }
+@keyframes bots-working { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .bot-line.working { animation: none; } }
+.bot-badge { flex: none; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--b-fill2); color: var(--b-info); font-size: 11px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---- the chat: the site's thread view, in the bot's colour */
+.bots-main { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; background: var(--b-pane); --bc: var(--b-black); --onbc: var(--b-black-mark); --ubub: var(--b-black); --tint: color-mix(in srgb, var(--bc) 9%, transparent); }
+.bots-main.ink { --ubub: light-dark(#1c1c1c, #3e3e3e); }
+.bots-blank { margin: auto; color: var(--b-t3); }
+.bots-main > .thread-head { position: absolute; inset: 0 0 auto; border: 0; }
+/* The bot's name where the thread's title was. */
+.bots-island { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; height: 40px; max-width: calc(100% - 200px); display: flex; align-items: center; gap: 8px; padding: 0 14px 0 8px; border: 0; border-radius: 99px; background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); font-size: 14px; font-weight: 500; }
+.bots-island > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bots-main .thread-head { min-height: 56px; border-bottom: 0; }
+.bots-main .crumbs { visibility: hidden; }
+.bots-main .share-btn { height: 36px; padding: 0 14px; border: 0; border-radius: 99px; background: none; box-shadow: 0 0 0 0.5px var(--b-b2); font-size: 13px; }
+.bots-main .messages { padding-top: 12px; gap: 12px; font-size: 15px; line-height: 22px; }
+.bots-main .msg.assistant > .md { width: fit-content; max-width: min(100%, 560px); padding: 7px 12px; border-radius: 18px; background: var(--b-botb); }
+.bots-main .msg.user .md { max-width: min(80%, 560px); padding: 7px 12px; border-radius: 18px; background: var(--ubub); color: #fff; }
+.bots-main .msg.user .md a { color: inherit; text-decoration: underline; }
+.bots-main .msg.user .md :not(pre) > code, .bots-main .msg.user .md pre { background: rgba(255, 255, 255, 0.18); }
+.bots-main .md p, .bots-main .md ul, .bots-main .md ol { margin-bottom: 10px; }
+.bots-main .dock { padding: 6px 16px 16px; }
+.bots-main .box { border: 0.5px solid var(--b-b2); border-radius: 22px; background: var(--b-elev); box-shadow: var(--b-shadow); }
+.bots-main .box:hover, .bots-main .box:focus-within { border-color: var(--b-b1); }
+.bots-main .box.asking { border-color: var(--bc); border-radius: 18px; }
+.bots-main .composer { flex-direction: row; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 16px; }
+.bots-main .composer textarea { flex: 1; min-width: 0; padding: 3px 0; font-size: 15px; line-height: 22px; }
+.bots-main .composer textarea::placeholder { color: var(--b-t4); }
+.bots-main .composer .tools-row .grow { display: none; }
+.bots-main .send:not(:disabled) { background: var(--bc); color: var(--onbc); }
+.bots-main .send:disabled { background: var(--b-b2); color: var(--b-t3); }
+/* A card of asks: each option with a letter, the picked one in the bot's colour. */
+.bots-main .card { padding: 12px; gap: 8px; border-bottom: 0.5px solid var(--b-b3); }
+.bots-main .choices { counter-reset: bots-opt; border: 0.5px solid var(--b-b2); border-radius: 8px; }
+.bots-main .choice { counter-increment: bots-opt; align-items: center; gap: 8px; padding: 8px; }
+.bots-main .choice + .choice { border-top: 0.5px solid var(--b-b3); }
+.bots-main .choice.on { background: var(--tint); }
+.bots-main .choice .radio, .bots-main .choice .radio.check { width: 24px; height: 24px; margin: 0; border: 0; border-radius: 8px; background: var(--b-fill2); display: grid; place-items: center; font-size: 11px; line-height: 1; color: var(--b-t2); }
+.bots-main .choice .radio::before { content: counter(bots-opt, upper-alpha); }
+.bots-main .choice.on .radio, .bots-main .choice.on .radio.check { border: 0; background: var(--bc); color: var(--onbc); }
+.bots-main .card .btn.primary { background: var(--bc); border-color: var(--bc); color: var(--onbc); }
+/* No open chat. */
+.bots-nochat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bots-hello { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 64px 24px 24px; text-align: center; }
+.bots-hello h2 { margin: 10px 0 0; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -0.008em; }
+.bots-hello p { margin: 0; max-width: 360px; font-size: 13px; line-height: 18px; color: var(--b-t2); text-wrap: balance; }
+.bots-hello p.quiet { margin-top: 10px; color: var(--b-t3); }
+.bots-nochat .dock > * { max-width: 760px; }
+
+/* ---- the details pane */
+.bots-pane { position: relative; width: 320px; flex: none; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 0 16px 16px; border-left: 0.5px solid var(--b-b3); background: var(--b-pane); }
+.bots-close { position: absolute; right: 12px; top: 10px; width: 32px; height: 32px; border-radius: 50%; }
+.bots-hero { margin-top: 56px; }
+.bots-pane h2 { margin: 12px 0 0; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -0.008em; text-align: center; }
+.bots-role { margin: 2px 0 0; font-size: 13px; line-height: 18px; color: var(--b-t2); text-align: center; text-wrap: balance; }
+.bots-label { align-self: flex-start; margin: 24px 0 6px 4px; font-size: 12px; line-height: 16px; color: var(--b-t2); }
+.bots-card { align-self: stretch; padding: 4px; border: 0.5px solid var(--b-b2); border-radius: 12px; }
+.bots-li { display: flex; align-items: baseline; gap: 6px; padding: 6px 8px; border-radius: 8px; color: var(--b-t1); font-size: 13px; line-height: 18px; }
+.bots-li:hover { background: var(--b-hover); text-decoration: none; }
+.bots-li.on { background: var(--b-active); }
+.bots-li-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bots-li-when { flex: none; font-size: 12px; line-height: 16px; color: var(--b-t3); font-variant-numeric: tabular-nums; }
+.bots-quiet { align-self: flex-start; margin-left: 4px; font-size: 13px; line-height: 18px; color: var(--b-t3); }
+
+/* Not wide enough for three columns: the pane goes. */
+@media (max-width: 1099px) {
+  .bots-pane { display: none; }
+  .bots-island { pointer-events: none; }
+}
+/* A phone, or a narrow panel on the Mac: the list, or the chat. */
+@media (max-width: 760px) {
+  .bots { grid-column: 1; }
+  .bots-list { width: auto; flex: 1; }
+  .bots.has-bot .bots-list { display: none; }
+  .bots:not(.has-bot) .bots-main { display: none; }
+  .bots-main .messages { padding-top: 8px; }
+  .bots-main .msg.user .md { max-width: 85%; }
+  .bots-island { max-width: calc(100% - 150px); }
+}

@@ -20,6 +20,8 @@ import { busy, Lists, ResizeHandle, type Row, useSidebarWidth } from './sidebar'
 import { Pop } from './menu';
 import { pastedOf } from './picture-chips';
 import { Rail } from './rail';
+import { botsOn } from './bots';
+import { BotsPage } from './bots-page';
 import { NewThread, ProjectPage, ProjectsList, RunnerPage, RunnersList, ScheduledList, SchedulePage, UsageList, UsagePage } from './pages';
 import { duration, fold, splitTurns, type Item } from './turns';
 import { folderName, sender } from './format';
@@ -97,11 +99,21 @@ class Catch extends Component<{ children: ReactNode }, { error: unknown }> {
 
 function Shell({ token, route }: { token: string; route: ReturnType<typeof useRoute> }) {
   const selected = route.page === 'thread' ? route.threadId : undefined;
-  const id = route.page === 'scheduled' || route.page === 'projects' || route.page === 'runners' || route.page === 'usage' ? route.id : undefined;
+  const id = route.page === 'scheduled' || route.page === 'projects' || route.page === 'runners' || route.page === 'usage' || route.page === 'bots' ? route.id : undefined;
   const [width, setWidth] = useSidebarWidth();
   const shell = useRef<HTMLDivElement>(null);
   // On a phone there's one column: a list, or what's open from it.
   const open = !!selected || !!id || route.page === 'new';
+  // The Bots page (an experiment, bots.ts) has its own list and chat, so it
+  // takes the sidebar's and the main column's room.
+  if (route.page === 'bots' && botsOn()) {
+    return (
+      <div className={`shell bots-shell ${open ? 'has-thread' : ''}`}>
+        <Rail token={token} route={route} />
+        <BotsPage token={token} id={id} thread={(threadId, back) => <ThreadView key={threadId} token={token} threadId={threadId} back={back} />} />
+      </div>
+    );
+  }
   return (
     <div ref={shell} className={`shell ${open ? 'has-thread' : ''}`} style={{ '--sidebar-width': `${width}px` } as CSSProperties}>
       <Rail token={token} route={route} />
@@ -151,7 +163,8 @@ function Empty({ text }: { text: string }) {
 
 // ------------------------------------------------------------ thread
 
-function ThreadView({ token, threadId }: { token: string; threadId: string }) {
+// `back`: where the back button goes, for a thread open inside another page.
+function ThreadView({ token, threadId, back = '/' }: { token: string; threadId: string; back?: string }) {
   const t = useLiveQuery(api.phone.threadRow, { token, threadId });
   const shown = useTranscript(token, threadId);
   // For thread: links, as agents may give only the start of an id.
@@ -242,7 +255,7 @@ function ThreadView({ token, threadId }: { token: string; threadId: string }) {
   return (
     <article className="thread">
       <header className="thread-head">
-        <button className="icon-btn back" onClick={() => go('/')} aria-label="Back to the threads" title="Back to the threads">
+        <button className="icon-btn back" onClick={() => go(back)} aria-label={back === '/' ? 'Back to the threads' : 'Back to the list'} title={back === '/' ? 'Back to the threads' : 'Back to the list'}>
           <Icon.Back />
         </button>
         <div className="crumbs" title={t.cwd}>
