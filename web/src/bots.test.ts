@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
+import { allBots, belongs, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -214,4 +214,46 @@ test('a second press while the first is still going starts nothing, and a failur
   assert.equal(started, 3, 'free again after the failure');
   finish('');
   assert.deepEqual(await third, { ran: true, value: 'made once more' });
+});
+
+test('a named chat is judged from its row as it is now, so one moved to another bot stops showing', () => {
+  const juno = { id: 'juno', runnerId: 'r1', folder: '/Users/me/work/bots/juno' };
+  assert.equal(namedChat(juno, undefined), 'checking');
+  assert.equal(namedChat(juno, null), 'no', 'no such thread');
+  // An archived thread of Juno's, kept in a folder outside Juno's.
+  const row = thread({ projects: [{ id: 'juno' }], cwd: '/Users/me/dev/site', view: 'den', archivedAt: '2026-11-01T00:00:00Z' });
+  assert.equal(namedChat(juno, row), 'ok');
+  // The same thread after it's moved to Wren's project: the row that arrives next says so.
+  assert.equal(namedChat(juno, { ...row, projects: [{ id: 'wren' }] }), 'no');
+  assert.equal(namedChat({ id: 'wren', runnerId: 'r1', folder: '/Users/me/work/bots/wren' }, { ...row, projects: [{ id: 'wren' }] }), 'ok');
+});
+
+test('the selected bot is always watched, even past the cap', () => {
+  const bots = Array.from({ length: 50 }, (_, i) => `r1/p${i}`);
+  const watched = watchKeys('r1/p47', bots, 40);
+  assert.equal(watched.length, 40);
+  assert.equal(watched[0], 'r1/p47', 'the one past the first 40 is there');
+  assert.equal(new Set(watched).size, 40, 'and only once');
+  assert.deepEqual(watchKeys('r1/p3', bots, 40).filter((k) => k === 'r1/p3'), ['r1/p3']);
+  assert.equal(watchKeys(undefined, bots, 40).length, 40);
+  assert.deepEqual(watchKeys('r1/x', [], 0), ['r1/x'], 'even with no room at all');
+  assert.deepEqual(watchKeys(undefined, [], 40), []);
+});
+
+test('a new chat starts only in the folder the project has right now', () => {
+  assert.equal(startFolder(undefined), undefined, 'not known yet: no chat can start');
+  assert.equal(startFolder(null), undefined, 'the project has gone');
+  assert.equal(startFolder(project('juno')), '/Users/me/work/bots/juno');
+  // The folder was changed somewhere else since the page read it.
+  assert.equal(startFolder(project('juno', { folders: ['/Users/me/work/bots/juno-moved'] })), '/Users/me/work/bots/juno-moved');
+  assert.equal(startFolder(project('juno', { folders: ['/Users/me/dev/site'] })), undefined, 'no longer a bot');
+  assert.equal(startFolder(project('juno', { archived: true })), undefined);
+});
+
+test('only the fields the page uses are kept of a project', () => {
+  const whole = { ...project('juno', { goals: 'Routes work', lastActivityAt: '2026-11-10T00:00:00Z' }), notes: 'long private notes', state: 'where it stands', icon: { url: 'https://example.invalid/i.png', by: 'user' }, createdBy: 'user', threadCount: 3 };
+  const kept = slimProject(whole);
+  assert.deepEqual(Object.keys(kept).sort(), ['folders', 'goals', 'id', 'lastActivityAt', 'runnerId', 'title']);
+  assert.equal(JSON.stringify(kept).includes('private notes'), false);
+  assert.deepEqual(buildBots([kept], []).business.map((b) => b.role), ['Routes work']);
 });

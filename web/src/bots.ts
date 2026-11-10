@@ -71,6 +71,15 @@ export type Bot = {
   threadId?: string;
 };
 
+/**
+ * Only what the page uses of a project. phone:project also carries its
+ * notes, state and icon, which can be long and are nothing to do with
+ * this page, so they're dropped before anything is kept.
+ */
+export function slimProject(p: BotProject): BotProject {
+  return { runnerId: p.runnerId, id: p.id, title: p.title, folders: [...p.folders], goals: p.goals, ...(p.archived ? { archived: true } : {}), ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}), ...(p.lastActivityAt ? { lastActivityAt: p.lastActivityAt } : {}) };
+}
+
 const segments = (path: string) => path.split('/').filter(Boolean);
 
 /** The first of a project's folders that makes it a bot, if any. */
@@ -151,6 +160,41 @@ export function threadsOf<T extends BotThread>(bot: BotKey, threads: T[]): T[] {
 export function chatFor(bot: BotKey, threads: BotThread[], held?: string): string | undefined {
   const live = threadsOf(bot, threads).filter(isLive);
   return held && live.some((t) => t.threadId === held) ? held : live[0]?.threadId;
+}
+
+/**
+ * A chat named in the address, judged from its row as it is now: `row` is
+ * undefined until it's known and null when there's no such thread. It's
+ * shown only while it's one of the bot's, so a thread moved to another
+ * project stops being shown under this bot's name.
+ */
+export function namedChat(bot: BotKey, row: BotThread | null | undefined): 'checking' | 'ok' | 'no' {
+  if (row === undefined) return 'checking';
+  return row && belongs(bot, row) ? 'ok' : 'no';
+}
+
+/**
+ * Which projects to watch live: the selected bot first, whatever the cap,
+ * then the others up to `most`. The selected one is where a message or a
+ * new chat goes, so it must never be the one left unwatched.
+ */
+export function watchKeys(selected: string | undefined, bots: string[], most: number): string[] {
+  const out = selected ? [selected] : [];
+  for (const key of bots) {
+    if (out.length >= Math.max(most, out.length ? 1 : 0)) break;
+    if (key !== selected) out.push(key);
+  }
+  return out;
+}
+
+/**
+ * The folder a new chat for a bot starts in, from the project as the live
+ * query has it right now. Undefined while that isn't known (`live`
+ * undefined), or if the project has gone or is no longer a bot: a chat is
+ * never started from a folder read earlier.
+ */
+export function startFolder(live: BotProject | null | undefined): string | undefined {
+  return live && !live.archived ? botFolder(live.folders) : undefined;
 }
 
 /**

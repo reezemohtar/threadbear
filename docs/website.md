@@ -153,13 +153,16 @@ browser remembers. It needs nothing new from the backend: a bot is a
 project with a folder inside a folder named `bots`. The list
 (`phone:projects`) leaves folders and goals out, so each project's
 `phone:project` is read once, four at a time (`bots-loader.ts`), and only
-the ones that are bots are then watched live (40 at most); a project given
-a bots folder later shows after a reload. Its section is a
+the ones that are bots are then watched live (40 at most, the selected
+bot always among them); only the fields the page uses are kept. A read
+that fails is offered again (Try again) and never counts as "not a bot". A
+project given a bots folder later shows after a reload. A new chat starts
+in the folder the live query has for the bot at that moment. Its section is a
 `Section: Personal` line in its goals, its role the first other line; it's
 pinned while one of its open threads is starred; and its threads are the
 inbox's and the hibernating ones in the project, or in its folder on its
 own runner. A chat named in the address (`/bots/<project>~<thread>`) is
-shown only if it's that bot's. The chat is `ThreadView` from `App.tsx`, so
+shown only while it's that bot's (its row is watched). The chat is `ThreadView` from `App.tsx`, so
 sending and the cards are the same code, and the page's code is fetched
 only when it's opened.
 A bot's shape and colour come from its project's id (`lookOf`).

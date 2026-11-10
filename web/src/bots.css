@@ -162,3 +162,9 @@
   .bots-main .msg.user .md { max-width: 85%; }
   .bots-island { max-width: calc(100% - 190px); }
 }
+
+/* The page's code couldn't be fetched (bots-lazy.tsx). */
+.bots-failed { grid-column: 2 / -1; margin: 12vh auto; max-width: 440px; padding: 0 24px; text-align: center; }
+.bots-failed h1 { margin: 0 0 8px; font-size: 22px; }
+.bots-note .linkish { font-size: inherit; }
+.bots-blank .bots-note { max-width: 320px; text-align: center; }

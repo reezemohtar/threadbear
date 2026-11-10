@@ -17,7 +17,7 @@ No check-in is booked for this one: `reminder` is a placeholder until the fork's
 
 ## Lives in
 
-`web/src/bots.ts` (the rules, with `bots.test.ts`), `bots-loader.ts` (reading the projects, with its test), `bots-page.tsx`, `bots-avatar.tsx`, `bots.css`; the `bots` route in `web/src/route.ts`, the rail entry in `rail.tsx`, and the branch in `Shell` and `ThreadView`'s `back` in `App.tsx`; `web/mock/` (the site on made-up data, for looking at the page). No backend, runner or app code.
+`web/src/bots.ts` (the rules, with `bots.test.ts`), `bots-loader.ts` (reading the projects, with its test), `bots-page.tsx`, `bots-lazy.tsx`, `bots-avatar.tsx`, `bots.css`; the `bots` route in `web/src/route.ts`, the rail entry in `rail.tsx`, and the branch in `Shell` and `ThreadView`'s `back` in `App.tsx`; `web/mock/` (the site on made-up data, for looking at the page). No backend, runner or app code.
 
 ## Taking it out
 

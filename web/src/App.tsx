@@ -2,7 +2,7 @@
 // sidebar (sidebar.tsx) beside a thread with each finished turn folded to
 // "Worked for 4m 12s" and its reply, and the agent's card of asks joined to
 // the composer. A shared thread (/s/<slug>) is share.tsx.
-import { Component, Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Component, Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { useLiveQuery } from './live';
 import { InboxProvider, useInbox } from './inbox';
@@ -21,13 +21,11 @@ import { Pop } from './menu';
 import { pastedOf } from './picture-chips';
 import { Rail } from './rail';
 import { botsOn } from './bots';
+import { LazyBots } from './bots-lazy';
 import { NewThread, ProjectPage, ProjectsList, RunnerPage, RunnersList, ScheduledList, SchedulePage, UsageList, UsagePage } from './pages';
 import { duration, fold, splitTurns, type Item } from './turns';
 import { folderName, sender } from './format';
 import * as Icon from './icons';
-
-// Fetched only when the Bots page is opened, so nobody else loads it.
-const BotsPage = lazy(() => import('./bots-page').then((m) => ({ default: m.BotsPage })));
 
 type Approval = NonNullable<Row['pendingApproval']>;
 type Ask = NonNullable<Row['asks']>[number];
@@ -115,9 +113,7 @@ function Shell({ token, route }: { token: string; route: ReturnType<typeof useRo
     return (
       <div className={`shell bots-shell ${open ? 'has-thread' : ''}`}>
         <Rail token={token} route={route} />
-        <Suspense fallback={<div className="pad muted">Loading…</div>}>
-          <BotsPage token={token} id={id} thread={(threadId, back) => <ThreadView key={threadId} token={token} threadId={threadId} back={back} />} />
-        </Suspense>
+        <LazyBots token={token} id={id} thread={(threadId, back) => <ThreadView key={threadId} token={token} threadId={threadId} back={back} />} />
       </div>
     );
   }

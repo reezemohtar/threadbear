@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, belongs, botFolder, botPath, buildBots, chatFor, COLORS, isLive, readBotId, singleFlight, threadsOf, type Bot, type BotProject, type BotThread } from './bots';
+import { allBots, botFolder, botPath, buildBots, chatFor, COLORS, isLive, namedChat, readBotId, singleFlight, slimProject, startFolder, threadsOf, watchKeys, type Bot, type BotProject, type BotThread } from './bots';
 import { projectLoader } from './bots-loader';
 import { Avatar } from './bots-avatar';
 import * as Icon from './icons';
@@ -25,15 +25,35 @@ const PANE_KEY = 'threadbear.botsDetails';
 const RECENT = 12;
 
 // How many bots are watched live for a change to their goals or folders. The
-// rest keep what was read when the page opened.
+// rest keep what was read when the page opened. The selected bot is always
+// one of them (watchKeys).
 const WATCHED = 40;
+
+const sameProject = (a: BotProject | null, b: BotProject | null) => JSON.stringify(a) === JSON.stringify(b);
+const projectArgs = (token: string, key: string) => {
+  const at = key.indexOf('/');
+  return { token, runnerId: key.slice(0, at), id: key.slice(at + 1) };
+};
+
+type Projects = {
+  projects: BotProject[];
+  // Every project has answered, so "no bots" and "that bot has gone" can be believed.
+  done: boolean;
+  // How many couldn't be read, and trying those again.
+  failed: number;
+  retry: () => void;
+  // The selected bot's project as the live query has it now: undefined until
+  // it answers, null if it has gone. A new chat starts from this, never from
+  // what was read earlier.
+  live: BotProject | null | undefined;
+};
 
 // Every project's folders and goals, as which ones are bots is in their
 // folders and the list (phone:projects) leaves those out. Each is read once,
 // four at a time (bots-loader.ts), and only the ones that are bots are then
-// watched. What's been read stays on screen while more is read. `done`: every
-// project has answered, so "no bots" and "that bot has gone" can be believed.
-function useProjects(token: string): { projects: BotProject[]; done: boolean } {
+// watched. What's been read stays on screen while more is read. Only the
+// fields the page uses are kept (slimProject).
+function useProjects(token: string, botId: string | undefined): Projects {
   const convex = useConvex();
   const heads = useLiveQuery(api.phone.projects, { token });
   const away = usePageAway();
@@ -41,11 +61,13 @@ function useProjects(token: string): { projects: BotProject[]; done: boolean } {
   const loader = useMemo(
     () =>
       projectLoader<BotProject>(
-        (key) => {
-          const at = key.indexOf('/');
-          return convex.query(api.phone.project, { token, runnerId: key.slice(0, at), id: key.slice(at + 1) });
+        async (key) => {
+          const p = await convex.query(api.phone.project, projectArgs(token, key));
+          return p && slimProject(p);
         },
         () => setRead((n) => n + 1),
+        4,
+        sameProject,
       ),
     [convex, token],
   );
@@ -58,22 +80,21 @@ function useProjects(token: string): { projects: BotProject[]; done: boolean } {
   }, [heads, loader]);
 
   const known = loader.known();
-  const bots = [...known].flatMap(([key, p]) => (p && !p.archived && botFolder(p.folders) ? [key] : [])).slice(0, WATCHED);
-  const watchKey = away ? '' : bots.join('\n');
+  const bots = [...known].flatMap(([key, p]) => (p && !p.archived && botFolder(p.folders) ? [key] : []));
+  const selected = botId ? bots.find((key) => known.get(key)?.id === botId) : undefined;
+  const watchKey = away ? '' : watchKeys(selected, bots, WATCHED).join('\n');
   const watching = useMemo(() => {
-    const out: Record<string, { query: typeof api.phone.project; args: { token: string; runnerId: string; id: string } }> = {};
-    for (const key of watchKey ? watchKey.split('\n') : []) {
-      const at = key.indexOf('/');
-      out[key] = { query: api.phone.project, args: { token, runnerId: key.slice(0, at), id: key.slice(at + 1) } };
-    }
+    const out: Record<string, { query: typeof api.phone.project; args: ReturnType<typeof projectArgs> }> = {};
+    for (const key of watchKey ? watchKey.split('\n') : []) out[key] = { query: api.phone.project, args: projectArgs(token, key) };
     return out;
   }, [watchKey, token]);
   const fresh = useQueries(watching) as Record<string, BotProject | null | Error | undefined>;
   useEffect(() => {
-    for (const [key, value] of Object.entries(fresh)) if (value !== undefined && !(value instanceof Error)) loader.put(key, value);
+    for (const [key, value] of Object.entries(fresh)) if (value !== undefined && !(value instanceof Error)) loader.put(key, value && slimProject(value));
   }, [fresh, loader]);
 
-  return { projects: [...known.values()].flatMap((p) => p ?? []), done: !!heads && loader.done() };
+  const now = selected ? fresh[selected] : undefined;
+  return { projects: [...known.values()].flatMap((p) => p ?? []), done: !!heads && loader.done(), failed: loader.failed().length, retry: loader.retry, live: now instanceof Error ? undefined : now };
 }
 
 // Re-renders every half minute so "5m" stays honest between updates.
@@ -99,8 +120,7 @@ type ThreadRow = BotThread & { title: string };
 
 export function BotsPage({ token, id, thread }: { token: string; id?: string; thread: (threadId: string, back: string) => ReactNode }) {
   const { botId, threadId: asked } = readBotId(id);
-  const convex = useConvex();
-  const { projects, done } = useProjects(token);
+  const { projects, done, failed, retry, live } = useProjects(token, botId);
   const inbox = useInbox();
   const asleep = useLiveQuery(api.phone.threads, { token, view: 'hibernating' });
   const [pane, setPane] = useState(() => localStorage.getItem(PANE_KEY) !== '0');
@@ -122,26 +142,25 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
     if (bot?.id && (held.bot !== bot.id || held.thread !== newest)) setHeld({ bot: bot.id, thread: newest });
   }, [bot?.id, newest, held]);
 
-  // A chat named in the address ("/bots/<bot>~<thread>") is shown only once
-  // it's known to be this bot's. An archived one isn't in the lists, so its
-  // row is read to find out.
+  // A chat named in the address ("/bots/<bot>~<thread>") is shown only while
+  // it's this bot's, judged from its row as it is now (namedChat). An
+  // archived one isn't in the lists, so its row is watched: if it's moved to
+  // another project while it's open here, it stops being shown under this
+  // bot's name. Asked for with useQueries, which hands back an error (no such
+  // thread) rather than throwing it.
   const listed = asked ? threads.find((t) => t.threadId === asked) : undefined;
-  const [looked, setLooked] = useState<{ id: string; row: ThreadRow | null }>();
-  useEffect(() => {
-    if (!asked || !ready || listed) return;
-    let current = true;
-    convex.query(api.phone.threadRow, { token, threadId: asked }).then(
-      (row) => current && setLooked({ id: asked, row }),
-      () => current && setLooked({ id: asked, row: null }),
-    );
-    return () => {
-      current = false;
-    };
-  }, [asked, ready, !!listed, convex, token]);
+  const lookFor = asked && ready && !listed ? asked : undefined;
+  const looking = useMemo<Record<string, { query: typeof api.phone.threadRow; args: { token: string; threadId: string } }>>(() => {
+    const out: Record<string, { query: typeof api.phone.threadRow; args: { token: string; threadId: string } }> = {};
+    if (lookFor) out.row = { query: api.phone.threadRow, args: { token, threadId: lookFor } };
+    return out;
+  }, [lookFor, token]);
+  const looked = (useQueries(looking) as { row?: ThreadRow | Error }).row;
   // Undefined: not known yet. Null: no such thread.
-  const askedRow = !asked ? undefined : (listed ?? (looked?.id === asked ? looked.row : undefined));
-  const open = asked ? (bot && askedRow && belongs(bot, askedRow) ? asked : undefined) : newest;
-  const openRow = asked ? (open ? askedRow : undefined) : threads.find((t) => t.threadId === open);
+  const askedRow = !asked ? undefined : (listed ?? (looked instanceof Error ? null : looked));
+  const named = bot && asked ? namedChat(bot, askedRow) : 'checking';
+  const open = asked ? (named === 'ok' ? asked : undefined) : newest;
+  const openRow = asked ? (open ? (askedRow ?? undefined) : undefined) : threads.find((t) => t.threadId === open);
 
   const togglePane = () => {
     localStorage.setItem(PANE_KEY, pane ? '0' : '1');
@@ -170,7 +189,9 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
           <h1>Bots</h1>
         </header>
         <nav className="bots-scroll" aria-label="Bots">
-          {!lists || (!count && !done) ? (
+          {lists && !count && !done && failed ? (
+            <Unread count={failed} retry={retry} />
+          ) : !lists || (!count && !done) ? (
             <div className="bots-note">Loading…</div>
           ) : !count ? (
             <div className="bots-note">No bots yet. A project is a bot when one of its folders is inside a folder named bots.</div>
@@ -185,7 +206,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
               ) : null}
               {section('Business', lists.business)}
               {section('Personal', lists.personal)}
-              {done ? null : <div className="bots-note">Looking for more…</div>}
+              {done ? null : failed ? <Unread count={failed} retry={retry} /> : <div className="bots-note">Looking for more…</div>}
             </>
           )}
         </nav>
@@ -201,18 +222,31 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
           {open ? (
             thread(open, botPath())
           ) : asked ? (
-            <NotItsChat bot={bot} checking={askedRow === undefined} />
+            <NotItsChat bot={bot} checking={named === 'checking'} />
           ) : (
-            <NoChat key={bot.id} token={token} bot={bot} />
+            <NoChat key={bot.id} token={token} bot={bot} live={live} />
           )}
         </section>
       ) : (
         <section className="bots-main">
           <BackBar />
-          <div className="bots-blank">{!lists || (botId && !done) ? 'Loading…' : botId ? 'That bot has gone.' : count ? 'Pick a bot.' : ''}</div>
+          <div className="bots-blank">{lists && botId && !done && failed ? <Unread count={failed} retry={retry} /> : !lists || (botId && !done) ? 'Loading…' : botId ? 'That bot has gone.' : count ? 'Pick a bot.' : ''}</div>
         </section>
       )}
       {bot && pane ? <Details token={token} bot={bot} threads={threads} open={open} close={togglePane} /> : null}
+    </div>
+  );
+}
+
+// Some projects couldn't be read, so which of them are bots isn't known: say
+// that, rather than that there are none.
+function Unread({ count, retry }: { count: number; retry: () => void }) {
+  return (
+    <div className="bots-note" role="alert">
+      {count === 1 ? 'One project couldn’t be read' : `${count} projects couldn’t be read`}, so some bots may be missing.{' '}
+      <button className="linkish" title="Read those projects again" onClick={retry}>
+        Try again
+      </button>
     </div>
   );
 }
@@ -300,8 +334,11 @@ function NotItsChat({ bot, checking }: { bot: Bot; checking: boolean }) {
   );
 }
 
-// A bot with no open chat: say so, and start one in its folder.
-function NoChat({ token, bot }: { token: string; bot: Bot }) {
+// A bot with no open chat: say so, and start one in its folder. The folder
+// and runner are the project's as the live query has them now (`live`,
+// startFolder), not as read when the page opened: until that has answered,
+// and if the project is no longer a bot, nothing can be started.
+function NoChat({ token, bot, live }: { token: string; bot: Bot; live: BotProject | null | undefined }) {
   const create = useMutation(api.phone.create);
   const [text, setText] = useState('');
   const [starting, setStarting] = useState(false);
@@ -315,15 +352,16 @@ function NoChat({ token, bot }: { token: string; bot: Bot }) {
   // One at a time, held from the press itself: `pending` is only set once the
   // backend has answered, and Return pressed twice before then would
   // otherwise queue two chats.
-  const start = useMemo(() => singleFlight((body: string) => create({ token, text: body, cwd: bot.folder, runnerId: bot.runnerId })), [create, token, bot.folder, bot.runnerId]);
+  const start = useMemo(() => singleFlight((body: string, cwd: string, runnerId: string) => create({ token, text: body, cwd, runnerId })), [create, token]);
+  const folder = startFolder(live);
   const busy = starting || !!pending;
   const submit = async () => {
     const body = text.trim();
-    if (!body || busy) return;
+    if (!body || busy || !live || !folder) return;
     setStarting(true);
     setError('');
     try {
-      const made = await start(body);
+      const made = await start(body, folder, live.runnerId);
       if (made.ran) setPending(made.value);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -338,7 +376,7 @@ function NoChat({ token, bot }: { token: string; bot: Bot }) {
         <Avatar look={bot.look} size={64} />
         <h2>{bot.title}</h2>
         {bot.role ? <p>{bot.role}</p> : null}
-        <p className="quiet">No open chat. Send a message to start one.</p>
+        <p className="quiet">{live === undefined ? 'No open chat. Checking this bot’s folder…' : folder ? 'No open chat. Send a message to start one.' : 'No open chat, and this project no longer has a folder inside a bots folder, so one can’t be started here.'}</p>
       </div>
       <div className="dock">
         {error ? (
@@ -371,7 +409,7 @@ function NoChat({ token, bot }: { token: string; bot: Bot }) {
               }}
             />
             <div className="tools-row">
-              <button className="send" disabled={!text.trim() || busy} aria-label="Start the chat" title={busy ? 'Starting the chat' : 'Start the chat'}>
+              <button className="send" disabled={!text.trim() || busy || !folder} aria-label="Start the chat" title={busy ? 'Starting the chat' : folder ? `Start the chat in ${folder}` : 'Waiting for this bot’s folder'}>
                 {busy ? <span className="spinner" /> : <Icon.Up />}
               </button>
             </div>
