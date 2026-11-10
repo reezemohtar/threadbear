@@ -1,11 +1,11 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, botFolder, botPath, botsSwitch, buildBots, COLORS, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
+import { allBots, belongs, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
-const thread = (over: Partial<BotThread> = {}): BotThread => ({ threadId: `t${++n}`, title: 'A chat', cwd: '/Users/me/elsewhere', status: 'idle', needsYou: false, unread: false, preview: '', lastActivityMs: NOW - 1000 * n, view: 'inbox', ...over });
+const thread = (over: Partial<BotThread> = {}): BotThread => ({ threadId: `t${++n}`, runnerId: 'r1', title: 'A chat', cwd: '/Users/me/elsewhere', status: 'idle', needsYou: false, unread: false, preview: '', lastActivityMs: NOW - 1000 * n, view: 'inbox', ...over });
 const project = (id: string, over: Partial<BotProject> = {}): BotProject => ({ runnerId: 'r1', id, title: id, folders: [`/Users/me/work/bots/${id}`], goals: '', ...over });
 const titles = (bots: { title: string }[]) => bots.map((b) => b.title);
 
@@ -48,7 +48,7 @@ test('a look is one of the 12 shapes and a colour, the same every time', () => {
 });
 
 test("a bot's threads are its project's and any in its own folder, newest first, each once", () => {
-  const bot = { id: 'juno', folder: '/Users/me/work/bots/juno' };
+  const bot = { id: 'juno', runnerId: 'r1', folder: '/Users/me/work/bots/juno' };
   const joined = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW - 5000 });
   const inFolder = thread({ cwd: '/Users/me/work/bots/juno', lastActivityMs: NOW - 1000 });
   const below = thread({ cwd: '/Users/me/work/bots/juno/notes', lastActivityMs: NOW - 9000 });
@@ -144,4 +144,74 @@ test('the page is off until this browser turns it on, and stays as it was left',
   assert.deepEqual(botsSwitch('', '1'), { on: true });
   assert.deepEqual(botsSwitch('?experiment=bots-off', '1'), { on: false, save: '0' });
   assert.deepEqual(botsSwitch('?experiment=other', '0'), { on: false });
+});
+
+test("the same folder path on another runner is not the bot's chat", () => {
+  const folder = '/Users/me/work/bots/juno';
+  const onA = { id: 'juno-a', runnerId: 'runner-a', folder };
+  const here = thread({ runnerId: 'runner-a', cwd: folder, lastActivityMs: NOW - 9000 });
+  const elsewhere = thread({ runnerId: 'runner-b', cwd: folder, lastActivityMs: NOW - 1000 });
+  assert.equal(belongs(onA, elsewhere), false);
+  assert.deepEqual(
+    threadsOf(onA, [elsewhere, here]).map((t) => t.threadId),
+    [here.threadId],
+  );
+  assert.equal(chatFor(onA, [elsewhere, here]), here.threadId, "never the other runner's newer thread");
+  // Each runner's bot gets its own runner's thread, though the paths are the same.
+  const lists = buildBots([project('juno-a', { runnerId: 'runner-a', folders: [folder] }), project('juno-b', { runnerId: 'runner-b', folders: [folder] })], [elsewhere, here]);
+  assert.deepEqual(
+    lists.business.map((b) => [b.id, b.threadId]),
+    [
+      ['juno-b', elsewhere.threadId],
+      ['juno-a', here.threadId],
+    ],
+  );
+  // A thread that has joined the project is the project's, whichever runner it is on.
+  assert.equal(belongs(onA, thread({ runnerId: 'runner-b', projects: [{ id: 'juno-a' }] })), true);
+});
+
+test("a chat named in the address must be one of the bot's, archived or not", () => {
+  const juno = { id: 'juno', runnerId: 'r1', folder: '/Users/me/work/bots/juno' };
+  assert.equal(belongs(juno, thread({ projects: [{ id: 'wren' }], cwd: '/Users/me/work/bots/wren' })), false, "another bot's thread");
+  assert.equal(belongs(juno, thread({ projects: [{ id: 'juno' }], view: 'den', archivedAt: '2026-11-01T00:00:00Z' })), true, 'its own archived thread');
+  assert.equal(belongs(juno, thread({ cwd: '/Users/me/work/bots/juno' })), true);
+});
+
+test('the open chat stays while it is still open, however new another gets', () => {
+  const bot = { id: 'juno', runnerId: 'r1', folder: '/Users/me/work/bots/juno' };
+  const first = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW - 5000 });
+  assert.equal(chatFor(bot, [first]), first.threadId);
+  const newer = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW });
+  assert.equal(chatFor(bot, [first, newer]), newer.threadId, 'nothing held: the newest');
+  assert.equal(chatFor(bot, [first, newer], first.threadId), first.threadId, 'held: it stays');
+  assert.equal(chatFor(bot, [{ ...first, view: 'den', archivedAt: '2026-11-11T00:00:00Z' }, newer], first.threadId), newer.threadId, 'put away: move on');
+  assert.equal(chatFor(bot, [newer], 'someone-elses'), newer.threadId);
+  assert.equal(chatFor(bot, []), undefined);
+});
+
+test('a second press while the first is still going starts nothing, and a failure frees it', async () => {
+  let started = 0;
+  let finish: (v: string) => void = () => {};
+  let fail: (e: Error) => void = () => {};
+  const start = singleFlight(
+    (text: string) =>
+      new Promise<string>((resolve, reject) => {
+        started++;
+        finish = () => resolve(`made ${text}`);
+        fail = reject;
+      }),
+  );
+  const first = start('hello');
+  assert.deepEqual(await start('hello'), { ran: false });
+  assert.deepEqual(await start('hello'), { ran: false });
+  assert.equal(started, 1, 'Return held down queues one chat, not three');
+  finish('');
+  assert.deepEqual(await first, { ran: true, value: 'made hello' });
+  const second = start('again');
+  fail(new Error('offline'));
+  await assert.rejects(second, /offline/);
+  const third = start('once more');
+  assert.equal(started, 3, 'free again after the failure');
+  finish('');
+  assert.deepEqual(await third, { ran: true, value: 'made once more' });
 });

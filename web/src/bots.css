@@ -88,8 +88,11 @@
 .bots-blank { margin: auto; color: var(--b-t3); }
 .bots-main > .thread-head { position: absolute; inset: 0 0 auto; border: 0; }
 /* The bot's name where the thread's title was. */
-.bots-island { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; height: 40px; max-width: calc(100% - 200px); display: flex; align-items: center; gap: 8px; padding: 0 14px 0 8px; border: 0; border-radius: 99px; background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); font-size: 14px; font-weight: 500; }
-.bots-island > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bots-island { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; height: 40px; max-width: min(520px, calc(100% - 240px)); display: flex; align-items: center; gap: 8px; padding: 0 14px 0 8px; border: 0; border-radius: 99px; background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); font-size: 14px; font-weight: 500; }
+.bots-island > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bots-island-name { flex: 0 1 auto; min-width: 48px; }
+/* Which of the bot's chats this is. */
+.bots-island-chat { flex: 0 10 auto; min-width: 0; padding-left: 8px; border-left: 0.5px solid var(--b-b1); font-weight: 400; color: var(--b-t2); }
 .bots-main .thread-head { min-height: 56px; border-bottom: 0; }
 .bots-main .crumbs { visibility: hidden; }
 .bots-main .share-btn { height: 36px; padding: 0 14px; border: 0; border-radius: 99px; background: none; box-shadow: 0 0 0 0.5px var(--b-b2); font-size: 13px; }
@@ -125,6 +128,8 @@
 .bots-hello h2 { margin: 10px 0 0; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -0.008em; }
 .bots-hello p { margin: 0; max-width: 360px; font-size: 13px; line-height: 18px; color: var(--b-t2); text-wrap: balance; }
 .bots-hello p.quiet { margin-top: 10px; color: var(--b-t3); }
+.bots-hello .btn { margin-top: 10px; }
+.bots-nochat .send .spinner { border-color: var(--b-b1); border-top-color: var(--b-t1); }
 .bots-nochat .dock > * { max-width: 760px; }
 
 /* ---- the details pane */
@@ -155,5 +160,5 @@
   .bots:not(.has-bot) .bots-main { display: none; }
   .bots-main .messages { padding-top: 8px; }
   .bots-main .msg.user .md { max-width: 85%; }
-  .bots-island { max-width: calc(100% - 150px); }
+  .bots-island { max-width: calc(100% - 190px); }
 }

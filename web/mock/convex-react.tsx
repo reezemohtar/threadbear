@@ -51,6 +51,8 @@ export function useMutation(mutation: FunctionReference<'mutation'>) {
   return mutations.get(name)!;
 }
 
+// One client, as the real one is: hooks key their work on it.
+const client = { query: async (query: FunctionReference<'query'>, args: unknown) => ask(getFunctionName(query), args) };
 export function useConvex() {
-  return { query: async (query: FunctionReference<'query'>, args: unknown) => ask(getFunctionName(query), args) };
+  return client;
 }

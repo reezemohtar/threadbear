@@ -11,8 +11,10 @@
 // - Its section is Business unless its goals have a line "Section: Personal".
 // - Its role line is the first other line of its goals.
 // - It's pinned while one of its open threads is starred.
-// - Its threads are the ones in the project, and any whose folder is the
-//   bot's own, so a chat started from this page counts before it has joined.
+// - Its threads are the ones in the project, and any on the bot's own runner
+//   whose folder is the bot's own, so a chat started from this page counts
+//   before it has joined. The same path on another runner is another
+//   machine's folder, and never counts.
 import { plain } from './format.ts';
 
 export type BotProject = { runnerId: string; id: string; title: string; folders: string[]; goals: string; archived?: boolean; updatedAt?: string; lastActivityAt?: string };
@@ -20,6 +22,7 @@ export type BotProject = { runnerId: string; id: string; title: string; folders:
 // The fields of a thread's row (phone:threads) this reads.
 export type BotThread = {
   threadId: string;
+  runnerId: string;
   title: string;
   cwd: string;
   status: string;
@@ -121,17 +124,51 @@ const inside = (path: string, folder: string) => path === folder || path.startsW
 
 export const isLive = (t: { archivedAt?: string; view?: string }) => !t.archivedAt && t.view !== 'den';
 
+type BotKey = { id: string; runnerId: string; folder: string };
+
+/** Whether a thread is one of a bot's: in its project, or in its folder on its runner. */
+export function belongs(bot: BotKey, t: BotThread): boolean {
+  return !!t.projects?.some((p) => p.id === bot.id) || (t.runnerId === bot.runnerId && inside(t.cwd, bot.folder));
+}
+
 /** A bot's threads out of these, newest first. */
-export function threadsOf<T extends BotThread>(bot: { id: string; folder: string }, threads: T[]): T[] {
+export function threadsOf<T extends BotThread>(bot: BotKey, threads: T[]): T[] {
   const seen = new Set<string>();
   return threads
     .filter((t) => {
-      if (seen.has(t.threadId)) return false;
-      if (!t.projects?.some((p) => p.id === bot.id) && !inside(t.cwd, bot.folder)) return false;
+      if (seen.has(t.threadId) || !belongs(bot, t)) return false;
       seen.add(t.threadId);
       return true;
     })
     .sort((a, b) => b.lastActivityMs - a.lastActivityMs);
+}
+
+/**
+ * The chat to show for a bot: the one already open (`held`) while it's still
+ * one of the bot's open threads, so the chat doesn't change under what's
+ * being typed when another thread becomes the newest; else its newest.
+ */
+export function chatFor(bot: BotKey, threads: BotThread[], held?: string): string | undefined {
+  const live = threadsOf(bot, threads).filter(isLive);
+  return held && live.some((t) => t.threadId === held) ? held : live[0]?.threadId;
+}
+
+/**
+ * Lets one call through at a time: a second while the first is still going
+ * is dropped (`ran: false`), so a double click or a held Return can't start
+ * the same thing twice. A failure frees it for the next try.
+ */
+export function singleFlight<A extends unknown[], R>(run: (...args: A) => Promise<R>): (...args: A) => Promise<{ ran: true; value: R } | { ran: false }> {
+  let going = false;
+  return async (...args) => {
+    if (going) return { ran: false };
+    going = true;
+    try {
+      return { ran: true, value: await run(...args) };
+    } finally {
+      going = false;
+    }
+  };
 }
 
 /** The chat a click on the bot opens: its newest thread that isn't archived. */
@@ -170,7 +207,7 @@ export function buildBots(projects: BotProject[], threads: BotThread[]): BotList
     const folder = botFolder(p.folders);
     if (!folder || p.archived || seen.has(p.id)) continue;
     seen.add(p.id);
-    const live = threadsOf({ id: p.id, folder }, threads).filter(isLive);
+    const live = threadsOf({ id: p.id, runnerId: p.runnerId, folder }, threads).filter(isLive);
     const newest = live[0];
     const last = Date.parse(p.lastActivityAt ?? p.updatedAt ?? '');
     const bot: Bot = {

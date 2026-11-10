@@ -150,13 +150,18 @@ answers from `data.ts`; mutations do nothing). Add `?theme=dark` or
 rules in `bots.ts`, look in `bots.css`; docs/experiments.md, `bots`). It's
 off until a browser opens the site with `?experiment=bots`, which that
 browser remembers. It needs nothing new from the backend: a bot is a
-project with a folder inside a folder named `bots`, read from
-`phone:project` for each project while the page shows (the list,
-`phone:projects`, leaves folders and goals out); its section is a
+project with a folder inside a folder named `bots`. The list
+(`phone:projects`) leaves folders and goals out, so each project's
+`phone:project` is read once, four at a time (`bots-loader.ts`), and only
+the ones that are bots are then watched live (40 at most); a project given
+a bots folder later shows after a reload. Its section is a
 `Section: Personal` line in its goals, its role the first other line; it's
 pinned while one of its open threads is starred; and its threads are the
-inbox's and the hibernating ones in the project or in its folder. The chat
-is `ThreadView` from `App.tsx`, so sending and the cards are the same code.
+inbox's and the hibernating ones in the project, or in its folder on its
+own runner. A chat named in the address (`/bots/<project>~<thread>`) is
+shown only if it's that bot's. The chat is `ThreadView` from `App.tsx`, so
+sending and the cards are the same code, and the page's code is fetched
+only when it's opened.
 A bot's shape and colour come from its project's id (`lookOf`).
 
 **Deploying:** `npm run web:deploy` runs `convex deploy` (prod) and then

@@ -18,7 +18,7 @@ Off by default. No backend, runner or Mac app code changed.
 |---|---|---|
 | `web/src/route.ts` | `'bots'` added to `RailView` and to the path pattern; one comment line | So `/bots` and `/bots/<id>` are addresses the site knows |
 | `web/src/rail.tsx` | Two imports and one line: a Bots entry after Projects, shown only while the experiment is on | The way into the page, on the rail and the phone's tab bar |
-| `web/src/App.tsx` | Two imports; `Shell` returns the Bots page for the `bots` route while the experiment is on, and counts its id as "something is open"; `ThreadView` takes an optional `back` (default `/`, so nothing else changes) | The page sits where the sidebar and main column are, and reuses the site's own thread view for the chat |
+| `web/src/App.tsx` | Two imports; `Shell` returns the Bots page (loaded only then, with `lazy`) for the `bots` route while the experiment is on, and counts its id as "something is open" only then; `ThreadView` takes an optional `back` (default `/`, so nothing else changes) | The page sits where the sidebar and main column are, and reuses the site's own thread view for the chat |
 | `docs/website.md` | A paragraph on the mock site and a section on the Bots page | Repo rule: docs stay true |
 | `docs/experiments.md` | Generated (`npm run experiment-docs`) from the new experiment file | Repo rule |
 
@@ -27,6 +27,7 @@ Off by default. No backend, runner or Mac app code changed.
 | File | What it is |
 |---|---|
 | `web/src/bots.ts`, `web/src/bots.test.ts` | The rules (which projects are bots, sections, order, the chat a bot opens, status, look, the switch) and their tests |
+| `web/src/bots-loader.ts`, `web/src/bots-loader.test.ts` | Reads each project's folders a few at a time, and its tests |
 | `web/src/bots-page.tsx`, `web/src/bots.css` | The page and its look |
 | `web/src/bots-avatar.tsx` | The 12 avatar shapes (our own drawings) and the rail icon |
 | `web/mock/` | The site on made-up data with no backend, for looking at a page (dev server only) |
