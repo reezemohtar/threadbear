@@ -59,6 +59,7 @@ export const newThreadsPart = {
       for (const p of projectIds) projects.get(p);
     }
     const { st, notes } = this.makeThread(params);
+    this.bots?.created(st.rec);
     if (projectIds.length) this.projects!.changeMembership(st.rec.id, { add: projectIds, by: 'mike' });
     const turnId = this.sendTo(st, params.text ?? '', params.images ?? [], { origin: params.origin, scheduleId: params.scheduleId });
     // Under the first turn, so they read as part of starting it.

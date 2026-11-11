@@ -29,6 +29,7 @@ import { KeepAwake } from './keep-awake.ts';
 import { experimentOn } from './experiments.ts';
 import { MacScreen } from './mac-screen.ts';
 import { Projects, drainProjectMethods, projectMethods } from './projects.ts';
+import { Bots, runnerHost } from './bots.ts';
 import { Librarian, librarianMethods } from './librarian.ts';
 import { ConnectorsMonitor, connectorsMethods } from './connectors.ts';
 import { TaskBoards, gatewayCaller, helperHeaders } from './notion-tasks.ts';
@@ -292,6 +293,7 @@ async function main(): Promise<void> {
     threadKey: (id) => makeThreadKey(token, id),
     standingInstructions: () => instructions.given(),
     projects,
+    bots: new Bots(runnerHost(() => runner, cfg.home, realClock, log)),
     atMac: () => atMac,
     config: cfg,
     store,
@@ -358,6 +360,7 @@ async function main(): Promise<void> {
   const kept = await peers.connectAll();
   elsewhere = peersElsewhere(peers);
   runner.start({ skip: kept });
+  runner.bots?.start();
   // Answers to ask_secret go after a day (docs/protocol.md, "Secrets").
   runner.secrets.startSweeping((e) => log.warn('secret sweep failed', { error: String(e) }));
   // After the threads are loaded, so a schedule that came due while the

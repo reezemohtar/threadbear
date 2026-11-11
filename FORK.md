@@ -61,6 +61,35 @@ files (`bots.ts`, `bots-page.tsx`, `bots.css`, the mock) and the docs.
 |---|---|---|
 | `web/src/App.tsx` | Two more optional fields on `ChatLook`, used only by the Bots page: `draft` and `stop`. In `Dock`: the text box starts from `chat?.draft?.text` (one changed line) and tells `chat?.draft?.set` when it changes (one added effect); the Stop button's spinner reads `chat.stop.pending` and its click calls `chat.stop.press()` when `chat.stop` is given (two changed lines). The type itself grew from one line to six with its comment. Without those fields every line behaves as before: the box starts empty, and Stop is the message box's own | A draft has to outlive the message box to survive a look at a task, and a thread's two Stop buttons (its row in Tasks, its own message box) have to be one Stop, or two stops can be sent |
 
+## Bots, the runner's record (branch `reeze/bots-record`, 12 Nov 2026)
+
+Stage A, slice 2: the runner keeps `bots.json` for the bots listed in
+`runner.json` (`bots.managed`), behind the `bots` experiment. New files:
+`runner/src/bots.ts`, `runner/test/unit/bots.test.ts`,
+`web/src/bots-folders.json` (the cases both copies of the folder rule are
+tested against).
+
+### Existing files edited
+
+Every line is added beside an existing line of the same kind; nothing is
+moved or reformatted.
+
+| File | Lines added | Why |
+|---|---|---|
+| `runner/src/runner.ts` | `import type { Bots } from './bots.ts';` after the `Projects` import | The type |
+| `runner/src/runner.ts` | `bots?: Bots;` in `RunnerDeps`, after `projects?: Projects;` | Handed in like `projects` |
+| `runner/src/runner.ts` | `bots?: Bots;` in the class, after `projects?: Projects;` | The field |
+| `runner/src/runner.ts` | `this.bots = deps.bots;` in the constructor, after `this.projects = deps.projects;` | Kept |
+| `runner/src/runner.ts` | `this.bots?.turnEnded(rec.id, outcome ?? (status === 'error' ? 'failed' : 'interrupted'));` in `endTurn`, after `this.markDirty(st);` | Every turn ends here, however it ended: the one place to write a task's report |
+| `runner/src/runner.ts` | `this.bots?.deleted(threadId);` in `delete`, after `this.waitedOnDeleted(threadId);` | A deleted thread leaves the record |
+| `runner/src/runner/new-threads.ts` | `this.bots?.created(st.rec);` in `create`, after `makeThread` | A new thread is classed as the main chat, a task or neither |
+| `runner/src/main.ts` | `import { Bots, runnerHost } from './bots.ts';` after the `Projects` import | Built here |
+| `runner/src/main.ts` | `bots: new Bots(runnerHost(() => runner, cfg.home, realClock, log)),` in `new Runner({...})`, after `projects,` | Built and handed in |
+| `runner/src/main.ts` | `runner.bots?.start();` after `runner.start({ skip: kept });` | Deadline timers are set again from the file |
+| `runner/src/rpc.ts` | `case 'bots.list': return r.bots?.list() ?? { on: false, managed: [], bots: [] };` (two lines) after `pools.list` | The read-only look at the record |
+| `web/src/bots.test.ts` | Two imports and one test | The website's copy of the folder rule is tested against the shared cases |
+| `docs/protocol.md`, `docs/on-your-mac.md`, `docs/experiments.md` (generated) | The Bots section and method row; the new file; the experiment's text | Repo rules |
+
 ## Fixes to Mike's code, until his release has them
 
 | File | Change | Why |

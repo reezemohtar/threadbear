@@ -1,0 +1,12 @@
+[
+  { "folder": "/Users/me/work/bots/juno", "bot": "juno" },
+  { "folder": "/Users/me/work/bots/juno/", "bot": "juno" },
+  { "folder": "/Users/me/work/bots/_test/juno", "bot": "juno" },
+  { "folder": "/Users/me/work/bots", "bot": null },
+  { "folder": "/Users/me/work/bots/_shared", "bot": null },
+  { "folder": "/Users/me/work/bots/.cache", "bot": null },
+  { "folder": "/Users/me/work/robots/juno", "bot": null },
+  { "folder": "/Users/me/dev/site", "bot": null },
+  { "folder": "/bots/a", "bot": "a" },
+  { "folder": "/Users/me/bots/sub/deep/wren", "bot": "wren" }
+]

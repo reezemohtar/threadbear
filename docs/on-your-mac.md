@@ -270,6 +270,15 @@ File references are where to look.
   `patch-trust-unvouched.json` lists worktrees a thread moved from another
   Mac changed the patches or Claude settings of, which Threadbear's own
   checkout's standing trust doesn't reach.
+- **Bots** (experiment `bots`, off by default; `runner/src/bots.ts`): with
+  it on and a bot listed in `runner.json` (`bots.managed`), the runner keeps
+  `bots.json` in its data folder: each managed bot's main chat, the threads
+  that chat started, their deadlines and the report written when each one's
+  turn ended (its last reply, cut to 2,000 characters, and the names and
+  paths of files it made). It reads `runner.json` again each time a thread
+  is made or a turn ends, and sets one timer for the next deadline. Nothing
+  leaves the Mac for this. Off, or with no bot listed, the file is never
+  written.
 - **Menus on macOS 27.2** (`app/Sources/Threadbear/DragSpace.swift`): every
   5 seconds, and before a button opens a menu, the app asks the window
   server which Spaces its own windows are on, and takes them off the drag

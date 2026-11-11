@@ -1,6 +1,8 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, mainChat, taskStatus, tasksOf, chatState, makeStops, STOP_WAIT_MS, tasksShown, taskState, goneConfirmed, makeDrafts, makeSession, rowAnswer } from './bots.ts';
 
 // Where a bot's chat ends up, as the page follows it once told to: for the older tests.
@@ -731,4 +733,14 @@ test('a failed Stop is dropped once its thread is known not to be working, and k
   await stops.press('t2', async () => Promise.reject(new Error('offline')), 0);
   stops.saw('t2', { busy: false }, 10);
   assert.deepEqual(stops.pending(), []);
+});
+
+test("the folder rule agrees with the runner's, from one list of cases", () => {
+  // runner/test/unit/bots.test.ts reads the same file against the runner's botName, so the two copies can't drift.
+  const cases = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'bots-folders.json'), 'utf8')) as { folder: string; bot: string | null }[];
+  assert.ok(cases.length >= 8);
+  for (const c of cases) {
+    const found = botFolder([c.folder]);
+    assert.equal(found === undefined ? null : found.replace(/\/+$/, '').split('/').pop(), c.bot, c.folder);
+  }
 });

@@ -57,6 +57,7 @@ import { agentsStillWorking, ErrorCode, LIMITS, PROTOCOL_VERSION, RpcError, sent
 import { activeProviders, cliName, providerInfo, providerName, providersForHello } from './providers.ts';
 import type { ArchivedBy, ArchiveVerdict, LibrarianStatus, Project, Schedule } from './protocol.ts';
 import { Projects } from './projects.ts';
+import type { Bots } from './bots.ts';
 import type { Settings } from './settings.ts';
 import type {
   AgentAdapter,
@@ -554,6 +555,7 @@ export type RunnerDeps = {
   // Projects (projects.ts): their folders' patches, the brief a session
   // starts with, and the summary's `projects`. Started by start().
   projects?: Projects;
+  bots?: Bots; // the managed bots' record (bots.ts, experiment bots)
   /** Mike's standing instructions for every session (instructions.ts); '' for none. */
   standingInstructions?: () => string;
   // A completed turn asked Mike to Restart to Update, by end_turn or in its
@@ -657,6 +659,7 @@ export class Runner {
   secrets: SecretStore;
   models?: Pick<Models, 'generate'>;
   projects?: Projects;
+  bots?: Bots;
   standingInstructions?: () => string;
   activity = new Set<(a: ThreadActivity) => void>();
   patchCache: PatchCache = new Map();
@@ -746,6 +749,7 @@ export class Runner {
     this.secrets = new SecretStore(paths.secrets(deps.config.home), () => this.clock.now());
     this.models = deps.models;
     this.projects = deps.projects;
+    this.bots = deps.bots;
     this.standingInstructions = deps.standingInstructions;
     this.appRestartAsked = deps.appRestartAsked;
     this.atMac = deps.atMac;
@@ -2466,6 +2470,7 @@ export class Runner {
     rec.status = rt.approvals.size ? 'waiting' : status;
     rec.lastActivityAt = this.isoNow();
     this.markDirty(st);
+    this.bots?.turnEnded(rec.id, outcome ?? (status === 'error' ? 'failed' : 'interrupted'));
     const waiters = rt.turnEndWaiters ?? [];
     rt.turnEndWaiters = undefined;
     for (const w of waiters) w();
@@ -2970,6 +2975,7 @@ export class Runner {
     rt.deleted = true;
     this.threads.delete(threadId);
     this.waitedOnDeleted(threadId);
+    this.bots?.deleted(threadId);
     this.dirty.delete(threadId);
     rt.idleTimer?.cancel();
     rt.deltaTimer?.cancel();
