@@ -76,6 +76,10 @@ const byJuno = { startedBy: { kind: 'thread', label: 'Juno · Router' } };
 threads.push(thread('juno-0008', 'Check the three venues', 'Comparing prices.', 0, { ...byJuno, status: 'running', working: 'Reading the second venue page' }));
 threads.push(thread('juno-0008', 'Draft the weekly summary', 'The draft is ready.', 12, { ...byJuno, needsYou: true, needs: 'you', asksSeq: 2, asks: [{ action: 'Send the weekly summary as drafted?', options: ['Send it', 'Not yet'] }] }));
 threads.push(thread('juno-0008', 'Tidy the notes folder', 'Moved 14 notes into place.', 95, byJuno));
+// ?tasks=13: that many more finished tasks, and one old one still waiting.
+const EXTRA = Number(new URLSearchParams(location.search).get('tasks')) || 0;
+for (let i = 0; i < EXTRA; i++) threads.push(thread('juno-0008', `Finished job ${i + 1}`, 'Done.', 100 + i, byJuno));
+if (EXTRA) threads.push(thread('juno-0008', 'Old question nobody answered', 'Waiting.', 9000, { ...byJuno, needsYou: true, needs: 'you' }));
 
 for (let i = 0; i < STRESS; i++) {
   // One bot in four has no open chat.
@@ -129,6 +133,15 @@ const pictures: Record<string, { seq: number; url: string; pinned?: boolean }[]>
   ],
 };
 
+const SEARCH = new URLSearchParams(location.search);
+// Threads archived since the page loaded, as another device would do it (__mock.archive).
+const gone: string[] = [];
+export function archive(threadId: string): void {
+  gone.push(threadId);
+  const at = threads.findIndex((t) => t.threadId === threadId);
+  if (at >= 0) archived.push({ ...threads.splice(at, 1)[0]!, view: 'den', archivedAt: iso(Date.now()) });
+}
+
 export function answer(name: string, args: Record<string, unknown>): unknown {
   switch (name) {
     case 'phone:images':
@@ -140,7 +153,7 @@ export function answer(name: string, args: Record<string, unknown>): unknown {
     case 'phone:threadsAt':
       return { rows: args.view === 'inbox' ? threads : [], at: NOW };
     case 'phone:threadsSince':
-      return { rows: [], gone: [] };
+      return { rows: [], gone: [...gone] };
     case 'phone:threads':
       return args.view === 'inbox' ? threads : args.view === 'den' ? archived : [];
     case 'phone:counts':
@@ -156,7 +169,8 @@ export function answer(name: string, args: Record<string, unknown>): unknown {
     case 'phone:projectThreads':
       return [...threads, ...archived].filter((t) => t.projects.some((p) => p.id === args.projectId)).sort((a, b) => b.lastActivityMs - a.lastActivityMs);
     case 'phone:command':
-      return { state: 'done' };
+      // ?stopfail=1: the Mac refuses a command. ?stopsilent=1: it never takes one (offline).
+      return SEARCH.has('stopfail') ? { state: 'failed', note: 'mock: the Mac refused it' } : SEARCH.has('stopsilent') ? { state: 'pending' } : { state: 'done' };
     default:
       // Lists nothing here fills: schedules, wakes, pictures, logins, searches.
       return [];

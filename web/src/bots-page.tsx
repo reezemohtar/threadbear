@@ -5,7 +5,7 @@
 // (`thread`), so reading, sending and answering cards work as they do
 // everywhere else. Which projects are bots, and the rest of the rules, are
 // bots.ts.
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { useConvex, useMutation, useQueries } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatFor, COLORS, isLive, isTask, latchPerKey, libraryChips, libraryOf, liveOf, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, taskStatus, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
+import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatState, COLORS, isBusy, isLive, isTask, libraryChips, libraryOf, liveOf, makeStops, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, tasksShown, taskState, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
 import { Mic } from './bots-mic';
 import type { ChatLook } from './App';
 import { projectLoader } from './bots-loader';
@@ -23,6 +23,11 @@ import * as Icon from './icons';
 import './bots.css';
 
 const PANE_KEY = 'threadbear.botsDetails';
+// How many finished tasks the list shows before Show more.
+const FINISHED = 5;
+// Stops pressed and not yet seen to work, kept for as long as the page is
+// loaded: leaving the tab or the pane doesn't forget one (makeStops).
+const stops = makeStops<Id<'commands'>>();
 const TAB_KEY = 'threadbear.botsPaneTab';
 // How many of a bot's chats the details pane lists.
 const RECENT = 12;
@@ -161,10 +166,16 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
   // it was picked, not whichever becomes newest while you're typing
   // (chatFor). It moves on only once that thread is put away.
   const [held, setHeld] = useState<{ bot?: string; thread?: string }>({});
-  const newest = bot ? chatFor(bot, threads, held.bot === bot.id ? held.thread : undefined) : undefined;
+  // If the open chat is put away somewhere else (archived on the Mac), no
+  // other chat is opened in its place: the page says so and waits to be told
+  // (chatState's `gone`), so what's typed never goes somewhere unannounced.
+  const chat = bot ? chatState(bot, threads, held.bot === bot.id ? held.thread : undefined) : ({ kind: 'none' } as const);
+  const newest = chat.kind === 'open' ? chat.threadId : undefined;
   useEffect(() => {
-    if (bot?.id && (held.bot !== bot.id || held.thread !== newest)) setHeld({ bot: bot.id, thread: newest });
-  }, [bot?.id, newest, held]);
+    if (!bot?.id) return;
+    if (chat.kind === 'open' && (held.bot !== bot.id || held.thread !== chat.threadId)) setHeld({ bot: bot.id, thread: chat.threadId });
+    else if (chat.kind === 'none' && held.bot !== bot.id) setHeld({ bot: bot.id });
+  }, [bot?.id, chat.kind, newest, held]);
 
   // A chat named in the address ("/bots/<bot>~<thread>") is shown only while
   // it's this bot's, judged from its row as it is now (namedChat). An
@@ -316,13 +327,25 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
               Main chat
             </a>
           ) : null}
-          {open ? (
-            thread(open, botPath(), { name: openTask ? 'this task' : bot.title, tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })
-          ) : asked ? (
-            <NotItsChat bot={bot} checking={named === 'checking'} />
-          ) : (
-            <NoChat key={bot.id} token={token} bot={bot} live={live} recheck={recheck} />
-          )}
+          {/* The bot's own chat stays in place, out of sight, while a task or another of its chats
+              is open over it, so what was being typed there is still there on the way back. */}
+          {newest ? (
+            <div className={`bots-view ${asked && asked !== newest ? 'away' : ''}`} inert={asked && asked !== newest ? true : undefined}>
+              {thread(newest, botPath(), { name: bot.title, tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })}
+            </div>
+          ) : null}
+          {asked && asked !== newest ? (
+            open ? (
+              <div className="bots-view">{thread(open, botPath(), { name: openTask ? 'this task' : 'this chat', tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })}</div>
+            ) : (
+              <NotItsChat bot={bot} checking={named === 'checking'} />
+            )
+          ) : chat.kind === 'gone' ? (
+            <ChatGone bot={bot} next={!!chat.next} go={() => setHeld({ bot: bot.id, thread: chat.next })} />
+          ) : !newest ? (
+            <NoChat key={bot.id} token={token} bot={bot} live={live} recheck={recheck} tasks={liveTasks} />
+          ) : null}
+          <StopWatch token={token} threads={threads} ready={ready} />
         </section>
       ) : (
         <section className="bots-main">
@@ -432,7 +455,70 @@ function NotItsChat({ bot, checking }: { bot: Bot; checking: boolean }) {
 // and runner are the project's as the live query has them now (`live`,
 // startFolder), not as read when the page opened: until that has answered,
 // and if the project is no longer a bot, nothing can be started.
-function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: ReturnType<typeof liveOf>; recheck: () => void }) {
+// The chat that was open has been put away somewhere else. Nothing takes its
+// place until asked: the message box is gone, so nothing typed can land in a
+// chat nobody chose.
+function ChatGone({ bot, next, go }: { bot: Bot; next: boolean; go: () => void }) {
+  return (
+    <div className="bots-nochat">
+      <BackBar />
+      <div className="bots-hello" role="status">
+        <Avatar look={bot.look} size={64} />
+        <h2>{bot.title}</h2>
+        <p className="quiet">The chat that was open here has been archived, or is no longer one of this bot’s chats.</p>
+        <p>
+          <button className="btn" title={next ? "Open this bot's main chat" : 'Start a new chat with this bot'} onClick={go}>
+            {next ? 'Open its main chat' : 'Start a new chat'}
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Follows each pending Stop to its end: its command (taken, done or failed)
+// and whether its thread is still working. It sits in the page, not the
+// pane, so it's there whichever tab is showing.
+function StopWatch({ token, threads, ready }: { token: string; threads: (BotThread & { title: string })[]; ready: boolean }) {
+  const key = useStops();
+  const asks = useMemo(() => {
+    const out: Record<string, { query: typeof api.phone.command; args: { token: string; commandId: Id<'commands'> } }> = {};
+    for (const p of stops.pending()) if (p.commandId) out[p.threadId] = { query: api.phone.command, args: { token, commandId: p.commandId } };
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, token]);
+  const commands = useQueries(asks) as Record<string, { state: string; note?: string } | Error | undefined>;
+  useEffect(() => {
+    if (!ready) return;
+    for (const p of stops.pending()) {
+      const row = threads.find((t) => t.threadId === p.threadId);
+      const command = commands[p.threadId];
+      // Not among the open threads any more: it isn't working.
+      stops.saw(p.threadId, { busy: row ? isBusy(row) : false, ...(command && !(command instanceof Error) ? { command } : {}) });
+    }
+  }, [threads, commands, ready, key]);
+  return null;
+}
+
+// Draws again when a Stop is pressed or settles, and every two seconds while
+// any is pending, as time alone moves one from stopping to not confirmed.
+// Gives the pending ones as a string, for effects to follow.
+function useStops(): string {
+  useSyncExternalStore(stops.subscribe, stops.version);
+  const key = stops
+    .pending()
+    .map((p) => `${p.threadId}=${p.commandId ?? ''}`)
+    .join(' ');
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!key) return;
+    const t = setInterval(() => tick((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, [key]);
+  return key;
+}
+
+function NoChat({ token, bot, live, recheck, tasks = 0 }: { token: string; bot: Bot; live: ReturnType<typeof liveOf>; recheck: () => void; tasks?: number }) {
   const create = useMutation(api.phone.create);
   const [text, setText] = useState('');
   const [starting, setStarting] = useState(false);
@@ -485,7 +571,7 @@ function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: 
             </p>
           </>
         ) : (
-          <p className="quiet">{live.state === 'checking' ? 'No open chat. Checking this bot’s folder…' : folder ? 'No open chat. Send a message to start one.' : 'No open chat, and this project no longer has a folder inside a bots folder, so one can’t be started here.'}</p>
+          <p className="quiet">{live.state === 'checking' ? 'No open chat. Checking this bot’s folder…' : folder ? `No open chat${tasks ? ` (its ${tasks === 1 ? 'task is' : `${tasks} tasks are`} in the list, under the name above)` : ''}. Send a message to start one.` : 'No open chat, and this project no longer has a folder inside a bots folder, so one can’t be started here.'}</p>
         )}
       </div>
       <div className="dock">
@@ -571,7 +657,7 @@ function Activity({ token, bot, threads, open }: { token: string; bot: Bot; thre
   const recent = threadsOf(bot, all).filter((t) => !isTask(t)).slice(0, RECENT);
   return (
     <>
-      <Tasks token={token} bot={bot} tasks={tasksOf(bot, all).slice(0, RECENT)} open={open} />
+      <Tasks token={token} bot={bot} tasks={tasksOf(bot, all)} open={open} />
       <div className="bots-label">Recent chats</div>
       {recent.length ? (
         <div className="bots-card">
@@ -632,35 +718,39 @@ function Library({ token, threadId }: { token: string; threadId?: string }) {
   );
 }
 
-const TASK_WORDS = { needs: 'Needs you', working: 'Working', failed: 'The last turn failed', finished: 'Finished' } as const;
+const TASK_WORDS = { needs: 'Needs you', working: 'Working', failed: 'The last turn failed', finished: 'Finished', archived: 'Archived' } as const;
 
 // A bot's tasks: the threads its agent started to do a job in the background.
 // Each row is the thread's own state; a working one can be stopped, with the
-// same stop the message box has (phone:interrupt). Shown only when there are
-// some.
+// same stop the message box has (phone:interrupt). Every task still open and
+// unresolved is listed; finished ones past a few are behind Show more.
 function Tasks({ token, bot, tasks, open }: { token: string; bot: Bot; tasks: (BotThread & { title: string })[]; open?: string }) {
   const interrupt = useMutation(api.phone.interrupt);
-  const [, redraw] = useState(0);
-  // One stop for each task until it has stopped: a second press does nothing.
-  const stops = useMemo(() => latchPerKey((threadId: string) => interrupt({ token, threadId })), [interrupt, token]);
-  const [failed, setFailed] = useState<string>();
-  // Once a task is no longer working, its Stop can be pressed again next time.
-  for (const t of tasks) if (taskStatus(t) !== 'working') stops.release(t.threadId);
+  // The pending Stops are the page's (stops), so they're still here after a
+  // look at the Library tab.
+  useStops();
+  const [all, setAll] = useState(false);
   if (!tasks.length) return null;
-  const stop = async (threadId: string) => {
-    setFailed(undefined);
-    const going = stops.press(threadId);
-    redraw((n) => n + 1);
-    if ((await going) === 'failed') setFailed(threadId);
-    redraw((n) => n + 1);
-  };
+  const { rows, more } = tasksShown(tasks, all ? Infinity : FINISHED);
+  const now = Date.now();
   return (
     <>
       <div className="bots-label">Tasks</div>
       <div className="bots-card">
-        {tasks.map((t) => {
-          const status = isLive(t) ? taskStatus(t) : 'finished';
-          const line = status === 'working' ? t.working?.trim() || TASK_WORDS.working : TASK_WORDS[status];
+        {rows.map((t) => {
+          const status = taskState(t);
+          const stopping = status === 'working' ? stops.phase(t.threadId, now) : 'idle';
+          const line =
+            stopping === 'failed'
+              ? `Couldn’t stop it: ${stops.error(t.threadId)}`
+              : stopping === 'unconfirmed'
+                ? 'Stop not confirmed yet. The Mac may be offline'
+                : stopping === 'stopping'
+                  ? 'Stopping…'
+                  : status === 'working'
+                    ? t.working?.trim() || TASK_WORDS.working
+                    : TASK_WORDS[status];
+          const words = stopping === 'stopping' ? 'Stopping' : stopping === 'idle' ? `Stop ${t.title || 'this task'}` : `Try to stop ${t.title || 'this task'} again`;
           return (
             <div key={t.threadId} className={`bots-task ${t.threadId === open ? 'on' : ''}`}>
               <a
@@ -677,16 +767,21 @@ function Tasks({ token, bot, tasks, open }: { token: string; bot: Bot; tasks: (B
                   <span className="bots-li-title">{t.title || 'Untitled'}</span>
                   <span className="bots-li-when">{ago(t.lastActivityMs)}</span>
                 </span>
-                <span className={`bots-task-line ${status}`}>{failed === t.threadId ? 'Couldn’t stop it. Try again' : line}</span>
+                <span className={`bots-task-line ${stopping === 'failed' || stopping === 'unconfirmed' ? 'needs' : status}`}>{line}</span>
               </a>
               {status === 'working' ? (
-                <button className="bots-stop" disabled={stops.held(t.threadId)} title={stops.held(t.threadId) ? 'Stopping' : 'Stop this task'} aria-label={stops.held(t.threadId) ? 'Stopping' : `Stop ${t.title || 'this task'}`} onClick={() => void stop(t.threadId)}>
-                  {stops.held(t.threadId) ? <span className="spinner" /> : <Icon.Stop />}
+                <button className="bots-stop" disabled={stopping === 'stopping'} title={words} aria-label={words} onClick={() => void stops.press(t.threadId, (threadId) => interrupt({ token, threadId }), Date.now())}>
+                  {stopping === 'stopping' ? <span className="spinner" /> : <Icon.Stop />}
                 </button>
               ) : null}
             </div>
           );
         })}
+        {more ? (
+          <button className="bots-more" title="Show the older finished tasks" onClick={() => setAll(true)}>
+            Show {more} more
+          </button>
+        ) : null}
       </div>
     </>
   );

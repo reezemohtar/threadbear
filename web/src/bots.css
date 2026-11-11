@@ -295,3 +295,9 @@
 .bots-to-main:hover { text-decoration: none; color: var(--b-t1); }
 .bots-to-main svg { width: 12px; height: 12px; }
 .bots-main.task .messages { padding-top: 44px; }
+
+/* The bot's chat and whatever is open over it (a task, another chat). */
+.bots-view { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.bots-view.away { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.bots-more { width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: none; text-align: left; font-size: 12px; line-height: 16px; color: var(--b-t2); }
+.bots-more:hover { background: var(--b-hover); color: var(--b-t1); }

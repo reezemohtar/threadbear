@@ -3,9 +3,9 @@
 // mutation is logged and does nothing. Made-up data only, so a page can be
 // looked at and photographed with no backend, no sign-in and nothing real
 // on screen. Never part of a build.
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { getFunctionName, type FunctionReference } from 'convex/server';
-import { answer } from './data';
+import { answer, archive } from './data';
 
 // Signed in, with the Bots page on and the look the address asks for
 // (?theme=dark), before the app reads any of them.
@@ -31,18 +31,34 @@ export function ConvexProvider({ children }: { client: unknown; children: ReactN
   return <>{children}</>;
 }
 
+// The data can change under the page (__mock.archive): every answer is asked
+// for again, and every hook hears.
+let version = 0;
+const hearers = new Set<() => void>();
+const hear = (l: () => void) => {
+  hearers.add(l);
+  return () => void hearers.delete(l);
+};
+function poke() {
+  answers.clear();
+  version++;
+  hearers.forEach((l) => l());
+}
+
 export function useQuery(query: FunctionReference<'query'>, args?: unknown): unknown {
+  useSyncExternalStore(hear, () => version);
   return args === 'skip' ? undefined : ask(getFunctionName(query), args);
 }
 
 export function useQueries(asks: Record<string, { query: FunctionReference<'query'>; args: unknown }>): Record<string, unknown> {
+  const at = useSyncExternalStore(hear, () => version);
   return useMemo(() => {
     if (FAILWATCH) {
       for (const key of held) if (!(key in asks)) healed.add(key);
       for (const key of Object.keys(asks)) held.add(key);
     }
     return Object.fromEntries(Object.entries(asks).map(([key, q]) => [key, FAILWATCH && getFunctionName(q.query) === 'phone:project' && !healed.has(key) ? new Error('mock: this watch failed') : ask(getFunctionName(q.query), q.args)]));
-  }, [asks]);
+  }, [asks, at]);
 }
 
 // For a stress run: ?slow=300 makes each one-off read take that long,
@@ -143,3 +159,9 @@ const client = {
 export function useConvex() {
   return client;
 }
+
+// For a script: archive a thread as another device would.
+(counts as unknown as { archive: (threadId: string) => void }).archive = (threadId) => {
+  archive(threadId);
+  poke();
+};

@@ -1,7 +1,13 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, latchPerKey, mainChat, taskStatus, tasksOf } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, mainChat, taskStatus, tasksOf, chatState, makeStops, STOP_WAIT_MS, tasksShown, taskState } from './bots.ts';
+
+// Where a bot's chat ends up, as the page follows it once told to: for the older tests.
+const chatFor = (bot: Parameters<typeof chatState>[0], threads: BotThread[], held?: string) => {
+  const s = chatState(bot, threads, held);
+  return s.kind === 'open' ? s.threadId : s.kind === 'gone' ? s.next : undefined;
+};
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -477,36 +483,104 @@ test('only a working task can be stopped, and a stopped one reads as finished', 
   assert.equal(taskStatus(task({ status: 'idle' })), 'finished');
 });
 
-test('Stop pressed twice sends one stop', async () => {
+test('Stop pressed twice sends one stop, and is let go only when the task has really stopped', async () => {
+  const stops = makeStops<string>();
   const sent: string[] = [];
-  let done: () => void = () => {};
-  const stops = latchPerKey(async (id: string) => {
+  const run = async (id: string) => {
     sent.push(id);
-    await new Promise<void>((r) => (done = r));
-  });
-  const first = stops.press('t1');
-  assert.equal(await stops.press('t1'), 'ignored');
-  assert.equal(stops.held('t1'), true);
-  done();
+    return `command-${sent.length}`;
+  };
+  const first = stops.press('t1', run, 1000);
+  assert.equal(await stops.press('t1', run, 1001), 'ignored');
   assert.equal(await first, 'sent');
-  assert.equal(await stops.press('t1'), 'ignored', 'still held until the task is seen to have stopped');
+  assert.equal(await stops.press('t1', run, 1500), 'ignored', 'sent is not stopped: still held');
   assert.deepEqual(sent, ['t1']);
+  assert.deepEqual(stops.pending(), [{ threadId: 't1', commandId: 'command-1' }]);
+  // The row gains "needs you" while its turn is still running: not let go.
+  stops.saw('t1', { busy: true, command: { state: 'taken' } });
+  assert.equal(stops.phase('t1', 2000), 'stopping');
+  assert.equal(await stops.press('t1', run, 2000), 'ignored');
   // Another task has its own.
-  const other = stops.press('t2');
-  done();
-  assert.equal(await other, 'sent');
-  // Seen stopped, then working again later: it can be stopped again.
-  stops.release('t1');
-  const again = stops.press('t1');
-  done();
-  assert.equal(await again, 'sent');
+  assert.equal(await stops.press('t2', run, 2000), 'sent');
+  // The thread is seen to have stopped: let go, and can be stopped again another time.
+  stops.saw('t1', { busy: false });
+  assert.equal(stops.phase('t1', 2100), 'idle');
+  assert.equal(await stops.press('t1', run, 9000), 'sent');
   assert.deepEqual(sent, ['t1', 't2', 't1']);
-  // A stop that fails lets go, so it can be tried again.
-  const failing = latchPerKey(async () => {
-    throw new Error('offline');
-  });
-  assert.equal(await failing.press('t9'), 'failed');
-  assert.equal(failing.held('t9'), false);
+});
+
+test('a Stop the Mac refuses, or never answers, is said and can be tried again', async () => {
+  const stops = makeStops<string>();
+  let n = 0;
+  const run = async () => `c${++n}`;
+  // Refused: the command comes back failed.
+  await stops.press('t1', run, 0);
+  stops.saw('t1', { busy: true, command: { state: 'failed', note: 'no such turn' } });
+  assert.equal(stops.phase('t1', 100), 'failed');
+  assert.equal(stops.error('t1'), 'no such turn');
+  assert.equal(await stops.press('t1', run, 200), 'sent', 'failed can be pressed again');
+  assert.equal(stops.phase('t1', 300), 'stopping');
+  // Offline: queued, never taken, the row never changes.
+  stops.saw('t1', { busy: true, command: { state: 'pending' } });
+  assert.equal(stops.phase('t1', 200 + STOP_WAIT_MS - 1), 'stopping');
+  assert.equal(stops.phase('t1', 200 + STOP_WAIT_MS), 'unconfirmed', 'not stuck at Stopping for good');
+  assert.equal(await stops.press('t1', run, 200 + STOP_WAIT_MS + 5), 'sent', 'unconfirmed can be pressed again');
+  // Sending itself fails.
+  assert.equal(await stops.press('t2', async () => Promise.reject(new Error('offline')), 0), 'failed');
+  assert.equal(stops.phase('t2', 1), 'failed');
+  assert.equal(stops.error('t2'), 'offline');
+  // The page hears each change.
+  let heard = 0;
+  const off = stops.subscribe(() => heard++);
+  stops.saw('t2', { busy: false });
+  assert.equal(heard, 1);
+  off();
+});
+
+test('when the open chat is archived elsewhere, nothing is opened in its place until told', () => {
+  const main = chat({ createdAt: '2026-11-01T00:00:00Z' });
+  const other = chat({ createdAt: '2026-11-05T00:00:00Z' });
+  assert.deepEqual(chatState(JUNO, [main, other]), { kind: 'open', threadId: main.threadId });
+  assert.deepEqual(chatState(JUNO, [main, other], main.threadId), { kind: 'open', threadId: main.threadId });
+  // Archived from the Mac while it is open here.
+  const archived = { ...main, view: 'den', archivedAt: '2026-11-11T00:00:00Z' };
+  assert.deepEqual(chatState(JUNO, [archived, other], main.threadId), { kind: 'gone', was: main.threadId, next: other.threadId }, 'said, with where it would go: not switched');
+  assert.deepEqual(chatState(JUNO, [archived], main.threadId), { kind: 'gone', was: main.threadId });
+  // Told to switch (nothing held any more): the bot's chat now.
+  assert.deepEqual(chatState(JUNO, [archived, other]), { kind: 'open', threadId: other.threadId });
+  assert.deepEqual(chatState(JUNO, [archived]), { kind: 'none' });
+  // A bot whose only threads are tasks has no chat, rather than a task standing in.
+  assert.deepEqual(chatState(JUNO, [task()]), { kind: 'none' });
+});
+
+test('every unresolved task is listed, however many; only finished history is capped', () => {
+  const finished = Array.from({ length: 13 }, (_, i) => task({ title: `Done ${i}`, lastActivityMs: NOW - i * 1000 }));
+  const oldAsk = task({ title: 'Old ask', needsYou: true, lastActivityMs: NOW - 9_000_000 });
+  const oldFail = task({ title: 'Old failure', status: 'error', lastActivityMs: NOW - 9_500_000 });
+  const working = task({ title: 'Working', status: 'running', lastActivityMs: NOW - 9_900_000 });
+  const gone = task({ title: 'Put away', needsYou: true, view: 'den', archivedAt: '2026-11-01T00:00:00Z', lastActivityMs: NOW - 9_950_000 });
+  const all = tasksOf(JUNO, [...finished, oldAsk, oldFail, working, gone]);
+  const { rows, more } = tasksShown(all, 5);
+  const shown = rows.map((t) => t.title);
+  assert.ok(shown.includes('Old ask') && shown.includes('Old failure') && shown.includes('Working'), 'the old ones that still need something are there');
+  assert.deepEqual(shown.slice(0, 3), ['Old ask', 'Old failure', 'Working'], 'and first');
+  assert.equal(rows.length, 3 + 5);
+  assert.equal(more, 13 + 1 - 5, 'the rest are behind Show more');
+  assert.equal(tasksShown(all, Infinity).rows.length, 17);
+  assert.equal(tasksShown(all, Infinity).more, 0);
+  assert.equal(taskState(gone), 'archived', 'an archived task says so, whatever it was waiting on');
+  assert.equal(taskState(oldAsk), 'needs');
+});
+
+test('another chat waiting on an answer outranks ordinary work in the main chat', () => {
+  const main = chat({ createdAt: '2026-11-01T00:00:00Z', status: 'running', working: 'Rendering the clips' });
+  const second = chat({ createdAt: '2026-11-09T00:00:00Z', needsYou: true });
+  const bot = buildBots([project('juno')], [main, second]).business[0]!;
+  assert.equal(bot.line, '1 other chat needs you', 'not "Rendering the clips"');
+  assert.equal(botLine(main, 0, 0, 1), '1 other chat needs you');
+  assert.equal(botLine(main, 2, 0, 1), '2 tasks need you');
+  assert.equal(botLine(main, 0, 3, 0), 'Rendering the clips', 'with nobody waiting, the main chat\'s own work');
+  assert.equal(botLine({ ...main, needsYou: true, asks: [{ action: 'Pick a take?' }] }, 2, 0, 1), 'Pick a take?', 'the main chat asking still comes first');
 });
 
 test('tasks that need you are counted apart from the main chat, neither twice', () => {

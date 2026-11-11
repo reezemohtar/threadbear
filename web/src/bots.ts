@@ -192,14 +192,21 @@ export function mainChat<T extends BotThread>(bot: BotKey, threads: T[]): T | un
   return (starred.length ? starred : mine).sort((a, b) => born(a) - born(b) || a.threadId.localeCompare(b.threadId))[0];
 }
 
+export type ChatState = { kind: 'open'; threadId: string } | { kind: 'gone'; was: string; next?: string } | { kind: 'none' };
+
 /**
- * The chat to show for a bot: the one already open (`held`) while it's still
- * one of the bot's open chats, so it doesn't change under what's being typed;
- * else its main chat. Never a task: those are opened by name, from the list.
+ * The chat to show for a bot. With nothing open yet, its main chat. With one
+ * open (`held`), that one for as long as it's still one of the bot's open
+ * chats, so it never changes under what's being typed. If it has been put
+ * away since (archived from the Mac, say), nothing is opened in its place:
+ * `gone`, with where the bot's chat would be now (`next`), so the page can
+ * say so and wait to be told to switch. Never a task.
  */
-export function chatFor(bot: BotKey, threads: BotThread[], held?: string): string | undefined {
+export function chatState(bot: BotKey, threads: BotThread[], held?: string): ChatState {
   const chats = threadsOf(bot, threads).filter((t) => isLive(t) && !isTask(t));
-  return held && chats.some((t) => t.threadId === held) ? held : mainChat(bot, threads)?.threadId;
+  const main = mainChat(bot, threads);
+  if (held) return chats.some((t) => t.threadId === held) ? { kind: 'open', threadId: held } : { kind: 'gone', was: held, ...(main ? { next: main.threadId } : {}) };
+  return main ? { kind: 'open', threadId: main.threadId } : { kind: 'none' };
 }
 
 /** A bot's tasks out of these, newest first, each once. Archived ones too. */
@@ -221,28 +228,95 @@ export function taskStatus(t: BotThread): TaskStatus {
   return t.status === 'error' ? 'failed' : 'finished';
 }
 
+export type TaskState = TaskStatus | 'archived';
+/** A task's row: its status while it's open, `archived` once it's put away. */
+export const taskState = (t: BotThread): TaskState => (isLive(t) ? taskStatus(t) : 'archived');
+
 /**
- * One press at a time for each key (a thread's Stop): a press while that
- * key's is still going, or has gone and not been released, does nothing, so
- * Stop pressed twice sends one stop. `release` lets it be pressed again
- * (the thread stopped, or was started again); a failed press releases itself.
+ * The tasks to list: every one still open and unresolved (working, needs
+ * you, failed), however many and however old, then the finished and archived
+ * ones up to `cap`. `more` is how many of those are left out.
  */
-export function latchPerKey<K>(run: (key: K) => Promise<unknown>): { press: (key: K) => Promise<'sent' | 'ignored' | 'failed'>; held: (key: K) => boolean; release: (key: K) => void } {
-  const latched = new Set<K>();
+export function tasksShown<T extends BotThread>(tasks: T[], cap: number): { rows: T[]; more: number } {
+  const open = tasks.filter((t) => ['working', 'needs', 'failed'].includes(taskState(t)));
+  const rest = tasks.filter((t) => !open.includes(t));
+  return { rows: [...open, ...rest.slice(0, cap)], more: Math.max(0, rest.length - cap) };
+}
+
+/** Really working: a turn is running, whatever else the row says. */
+export const isBusy = (t: { status: string }) => busy(t);
+
+// How long a Stop waits to be seen to have worked before it says it isn't
+// confirmed and can be pressed again.
+export const STOP_WAIT_MS = 20_000;
+export type StopPhase = 'idle' | 'stopping' | 'unconfirmed' | 'failed';
+
+/**
+ * The Stops that have been pressed and not yet seen to work, by thread. It
+ * lives outside any component, so leaving a tab or opening another chat
+ * doesn't forget one. A press while one is `stopping` does nothing, so Stop
+ * pressed twice sends one stop. It's let go only when the thread is seen to
+ * be no longer working (`saw` with busy false), never because the row says
+ * something else as well. Sending it is not the end: the stop is a command
+ * the Mac has still to take, so its command is watched (`saw` with the
+ * command's state), a refusal is `failed`, and one that nothing has
+ * confirmed after STOP_WAIT_MS is `unconfirmed`. Both can be pressed again.
+ */
+export function makeStops<C = string>() {
+  const entries = new Map<string, { at: number; commandId?: C; error?: string }>();
+  const listeners = new Set<() => void>();
+  let version = 0;
+  const changed = () => {
+    version++;
+    listeners.forEach((l) => l());
+  };
+  const phase = (threadId: string, now: number): StopPhase => {
+    const e = entries.get(threadId);
+    if (!e) return 'idle';
+    if (e.error !== undefined) return 'failed';
+    return now - e.at >= STOP_WAIT_MS ? 'unconfirmed' : 'stopping';
+  };
   return {
-    async press(key) {
-      if (latched.has(key)) return 'ignored';
-      latched.add(key);
+    phase,
+    error: (threadId: string) => entries.get(threadId)?.error,
+    async press(threadId: string, run: (threadId: string) => Promise<C>, now: number): Promise<'sent' | 'ignored' | 'failed'> {
+      if (phase(threadId, now) === 'stopping') return 'ignored';
+      const mine: { at: number; commandId?: C; error?: string } = { at: now };
+      entries.set(threadId, mine);
+      changed();
       try {
-        await run(key);
+        const commandId = await run(threadId);
+        if (entries.get(threadId) === mine) {
+          mine.commandId = commandId;
+          changed();
+        }
         return 'sent';
-      } catch {
-        latched.delete(key);
+      } catch (e) {
+        if (entries.get(threadId) === mine) {
+          mine.error = e instanceof Error ? e.message : String(e);
+          changed();
+        }
         return 'failed';
       }
     },
-    held: (key) => latched.has(key),
-    release: (key) => void latched.delete(key),
+    /** What's been seen since: whether the thread is still working, and its stop command's state. */
+    saw(threadId: string, seen: { busy?: boolean; command?: { state: string; note?: string } }) {
+      const e = entries.get(threadId);
+      if (!e) return;
+      if (seen.busy === false) {
+        entries.delete(threadId);
+        changed();
+      } else if (seen.command?.state === 'failed' && e.error === undefined) {
+        e.error = seen.command.note || 'the Mac could not stop it';
+        changed();
+      }
+    },
+    pending: () => [...entries].map(([threadId, e]) => ({ threadId, commandId: e.commandId })),
+    subscribe(l: () => void) {
+      listeners.add(l);
+      return () => void listeners.delete(l);
+    },
+    version: () => version,
   };
 }
 
@@ -357,10 +431,13 @@ const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : 
  */
 export function botLine(main: BotThread | undefined, tasksWaiting: number, tasksWorking: number, chatsWaiting = 0): string {
   const own = lineOf(main ? [main] : []);
-  if (main && (waiting(main) || (busy(main) && !tasksWaiting))) return own;
+  // The main chat asking comes first, as it's what a click opens. Then
+  // anything else waiting on an answer, which outranks ordinary work, the
+  // main chat's included. Then work.
+  if (main && waiting(main)) return own;
   if (tasksWaiting) return count(tasksWaiting, 'task needs you', 'tasks need you');
-  // Another of its chats, not the main one: say so, or the amber mark would sit beside the main chat's words.
   if (chatsWaiting) return count(chatsWaiting, 'other chat needs you', 'other chats need you');
+  if (main && busy(main)) return own;
   if (tasksWorking) return `Working on ${count(tasksWorking, 'task', 'tasks')}`;
   return own;
 }
