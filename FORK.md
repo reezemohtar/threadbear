@@ -40,4 +40,5 @@ Off by default. No backend, runner or Mac app code changed.
 | File | Change | Why |
 |---|---|---|
 | `runner/test/deploy/deploy.test.ts` | One line: the fake repo also gets `src/secure-url.ts` | Release 2026-11-11 made `convex-admin.ts` import it, and every deploy test failed without it. Drop this row once a release of Mike's copies it too |
+| `ios/ThreadbearKit/Tests/ThreadbearKitTests/MessageHistoryTests.swift` | The paced-stream test's time limit is 10 seconds, not 2 | On this M2 Pro it took 2.3 to 2.7 seconds inside `tb land`'s check and refused the landing twice (0.35 alone). Take Mike's side if he changes the limit |
 | `runner/src/adapters/codex/adapter.ts`, `runner/test/unit/codex-adapter.test.ts` | Codex's "until the project is trusted" config warning isn't raised as a notice | It showed in the error bar for every new folder (10 Nov 2026) |
