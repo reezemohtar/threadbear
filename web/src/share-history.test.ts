@@ -97,7 +97,10 @@ test('a paced stream of big rows keeps older within its byte cap', () => {
   assert.equal(h.older[h.older.length - 1]!.seq, h.live!.messages[0]!.seq - 1);
   // What went can be loaded again.
   assert.equal(nextBefore(h), h.older[0]!.seq);
-  assert.ok((cpu.user + cpu.system) / 1000 < 100, `took ${(cpu.user + cpu.system) / 1000} ms of CPU`);
+  // 500, not 100: on a Mac under load (a landing's check beside other threads' work) it took
+  // 106.7 ms and refused a landing (11 Nov 2026). What this guards against is the old cost, which
+  // was seconds: kept rows were copied on every update.
+  assert.ok((cpu.user + cpu.system) / 1000 < 500, `took ${(cpu.user + cpu.system) / 1000} ms of CPU`);
 });
 
 test('a long stream of small rows keeps older within its row cap', () => {
