@@ -298,3 +298,7 @@ button.bots-stop:hover { background: var(--b-active); color: var(--b-t1); }
 
 .bots-more { width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: none; text-align: left; font-size: 12px; line-height: 16px; color: var(--b-t2); }
 .bots-more:hover { background: var(--b-hover); color: var(--b-t1); }
+
+/* While a Stop is queued: what that means, beside each Stop. */
+.bots-task-warn { display: block; margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--b-t3); white-space: normal; }
+.bots-queued { position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 3; max-width: min(560px, calc(100% - 32px)); padding: 6px 12px; border-radius: 12px; background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); font-size: 12px; line-height: 16px; color: var(--b-warn-text); text-align: center; }

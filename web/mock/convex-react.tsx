@@ -5,7 +5,7 @@
 // on screen. Never part of a build.
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { getFunctionName, type FunctionReference } from 'convex/server';
-import { answer, archive } from './data';
+import { answer, archive, hide } from './data';
 
 // Signed in, with the Bots page on and the look the address asks for
 // (?theme=dark), before the app reads any of them.
@@ -57,7 +57,19 @@ export function useQueries(asks: Record<string, { query: FunctionReference<'quer
       for (const key of held) if (!(key in asks)) healed.add(key);
       for (const key of Object.keys(asks)) held.add(key);
     }
-    return Object.fromEntries(Object.entries(asks).map(([key, q]) => [key, FAILWATCH && getFunctionName(q.query) === 'phone:project' && !healed.has(key) ? new Error('mock: this watch failed') : ask(getFunctionName(q.query), q.args)]));
+    return Object.fromEntries(
+      Object.entries(asks).map(([key, q]) => {
+        const name = getFunctionName(q.query);
+        if (FAILWATCH && name === 'phone:project' && !healed.has(key)) return [key, new Error('mock: this watch failed')];
+        if (name === 'phone:threadRow') {
+          // ?rowerror=1: the lookup fails for some other reason. No such thread: the backend's own not-found.
+          if (params.has('rowerror')) return [key, new Error('mock: Server Error')];
+          const row = ask(name, q.args);
+          return [key, row ?? Object.assign(new Error('no such thread'), { data: { kind: 'notFound', message: 'no such thread' } })];
+        }
+        return [key, ask(name, q.args)];
+      }),
+    );
   }, [asks, at]);
 }
 
@@ -163,5 +175,11 @@ export function useConvex() {
 // For a script: archive a thread as another device would.
 (counts as unknown as { archive: (threadId: string) => void }).archive = (threadId) => {
   archive(threadId);
+  poke();
+};
+
+// For a script: drop a thread out of the lists while it's still open.
+(counts as unknown as { hide: (threadId: string) => void }).hide = (threadId) => {
+  hide(threadId);
   poke();
 };

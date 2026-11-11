@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatState, COLORS, goneConfirmed, makeDrafts, isBusy, isLive, isTask, libraryChips, libraryOf, liveOf, makeStops, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, tasksShown, taskState, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
+import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatState, COLORS, goneConfirmed, makeDrafts, makeSession, QUEUED_STOP_WARNING, rowAnswer, isBusy, isLive, isTask, libraryChips, libraryOf, liveOf, makeStops, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, tasksShown, taskState, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
 import { Mic } from './bots-mic';
 import type { ChatLook } from './App';
 import { projectLoader } from './bots-loader';
@@ -30,6 +30,8 @@ const FINISHED = 5;
 const stops = makeStops<Id<'commands'>>();
 // What's typed and not sent, by thread (makeDrafts).
 const drafts = makeDrafts();
+// Both are kept while the sign-in is the same one, whatever page is showing.
+const session = makeSession([stops.clear, drafts.clear]);
 const TAB_KEY = 'threadbear.botsPaneTab';
 // How many of a bot's chats the details pane lists.
 const RECENT = 12;
@@ -178,14 +180,10 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
   const gone = bot && chat.kind === 'gone' ? goneConfirmed(bot, wasRow) : 'still';
   const newest = chat.kind === 'open' ? chat.threadId : chat.kind === 'gone' && gone !== 'gone' ? chat.was : undefined;
   const interrupt = useMutation(api.phone.interrupt);
-  // The Stops and drafts are this sign-in's: another starts with none.
-  useEffect(
-    () => () => {
-      stops.clear();
-      drafts.clear();
-    },
-    [token],
-  );
+  // The Stops and drafts are this sign-in's: another starts with none. Leaving
+  // this page clears nothing: a Stop still queued in the backend must still
+  // be known on the way back, or a second could be sent.
+  useEffect(() => void session.enter(token), [token]);
   useStops();
   useEffect(() => {
     if (!bot?.id) return;
@@ -355,6 +353,11 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
           ) : (
             <NoChat key={bot.id} token={token} bot={bot} live={live} recheck={recheck} tasks={liveTasks} />
           )}
+          {onScreen && stops.phase(onScreen, Date.now()) === 'queued' ? (
+            <div className="bots-queued" role="status">
+              {QUEUED_STOP_WARNING}
+            </div>
+          ) : null}
           <StopWatch token={token} threads={threads} ready={ready} />
         </section>
       ) : (
@@ -497,7 +500,8 @@ function useRow(token: string, threadId: string | undefined): (BotThread & { tit
     return out;
   }, [threadId, token]);
   const row = (useQueries(asks) as { row?: (BotThread & { title: string }) | Error }).row;
-  return !threadId ? undefined : row instanceof Error ? null : row;
+  // Null only for an outright not-found: any other error says nothing about the thread (rowAnswer).
+  return !threadId ? undefined : rowAnswer(row);
 }
 
 // Follows each pending Stop to its end: its command (taken, done or failed)
@@ -527,9 +531,10 @@ function StopWatch({ token, threads, ready }: { token: string; threads: (BotThre
     if (!ready) return;
     for (const p of stops.pending()) {
       const listed = threads.find((t) => t.threadId === p.threadId);
-      const looked = answers[`r ${p.threadId}`];
-      // Working or not, from its row. No row to go on yet: not known. No such thread: it isn't working.
-      const busy = listed ? isBusy(listed) : looked instanceof Error ? false : looked ? isBusy(looked as { status: string }) : undefined;
+      const looked = rowAnswer(answers[`r ${p.threadId}`] as { status: string } | Error | undefined);
+      // Working or not, from its row. No such thread, said outright: it isn't working. No answer, or an
+      // error of any other kind: not known, and the Stop stays as it is.
+      const busy = listed ? isBusy(listed) : looked === null ? false : looked ? isBusy(looked) : undefined;
       const command = answers[`c ${p.threadId}`];
       stops.saw(p.threadId, { ...(busy !== undefined ? { busy } : {}), ...(command && !(command instanceof Error) ? { command: command as { state: string; note?: string } } : {}) }, Date.now());
     }
@@ -807,6 +812,7 @@ function Tasks({ token, bot, tasks, open }: { token: string; bot: Bot; tasks: (B
                   <span className="bots-li-when">{ago(t.lastActivityMs)}</span>
                 </span>
                 <span className={`bots-task-line ${stopping === 'failed' || stopping === 'queued' ? 'needs' : status}`}>{line}</span>
+                {stopping === 'queued' ? <span className="bots-task-warn">{QUEUED_STOP_WARNING}</span> : null}
               </a>
               {/* No button while a Stop is on its way: a second one could stop the next turn. */}
               {status !== 'working' ? null : stopping === 'stopping' || stopping === 'queued' ? (

@@ -142,6 +142,11 @@ export function archive(threadId: string): void {
   if (at >= 0) archived.push({ ...threads.splice(at, 1)[0]!, view: 'den', archivedAt: iso(Date.now()) });
 }
 
+// A gap in the lists: the thread drops out of them and is still open (__mock.hide).
+export function hide(threadId: string): void {
+  gone.push(threadId);
+}
+
 export function answer(name: string, args: Record<string, unknown>): unknown {
   switch (name) {
     case 'phone:images':

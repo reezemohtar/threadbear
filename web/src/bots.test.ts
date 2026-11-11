@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, mainChat, taskStatus, tasksOf, chatState, makeStops, STOP_WAIT_MS, tasksShown, taskState, goneConfirmed, makeDrafts } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, mainChat, taskStatus, tasksOf, chatState, makeStops, STOP_WAIT_MS, tasksShown, taskState, goneConfirmed, makeDrafts, makeSession, rowAnswer } from './bots.ts';
 
 // Where a bot's chat ends up, as the page follows it once told to: for the older tests.
 const chatFor = (bot: Parameters<typeof chatState>[0], threads: BotThread[], held?: string) => {
@@ -522,7 +522,7 @@ test('no second stop while the first is still on its way, however long that take
   assert.equal(sent, 1);
 });
 
-test('a new stop is allowed only once the first is over', async () => {
+test('a new stop is allowed only once the first is over: seen idle, or failed, or long done', async () => {
   const stops = makeStops<string>();
   let sent = 0;
   const run = async () => `c${++sent}`;
@@ -535,7 +535,8 @@ test('a new stop is allowed only once the first is over', async () => {
   assert.deepEqual(stops.pending(), [], 'and nothing is kept for it');
   // Working again later: a new turn, a new stop.
   assert.equal(await stops.press('t1', run, 5000), 'sent');
-  // Done, but the thread still reads as working long after: a new turn began.
+  // Done, but the thread still reads as working long after. Nothing says which turn it is on:
+  // another attempt is allowed, so a Stop that did nothing cannot block the button for good.
   stops.saw('t1', { busy: true, command: { state: 'done' } }, 6000);
   stops.saw('t1', { busy: true, command: { state: 'done' } }, 6000 + STOP_WAIT_MS - 1);
   assert.equal(await stops.press('t1', run, 6000 + STOP_WAIT_MS - 1), 'ignored');
@@ -674,4 +675,60 @@ test('tasks that need you are counted apart from the main chat, neither twice', 
   assert.equal(two.threadId, main.threadId);
   assert.equal(two.line, '1 other chat needs you');
   assert.equal(two.tasksWaiting, 0, 'a chat is not a task');
+});
+
+test('pending Stops and drafts outlive the page, and are cleared only by another sign-in', async () => {
+  const stops = makeStops<string>();
+  const drafts = makeDrafts();
+  const session = makeSession([stops.clear, drafts.clear]);
+  let sent = 0;
+  const run = async () => `c${++sent}`;
+  assert.equal(session.enter('token-a'), false, 'the first sign-in clears nothing');
+  await stops.press('t1', run, 0);
+  drafts.set('t1', 'half a thought');
+  // Bots -> Threads -> Bots: the page unmounts and mounts again. Nothing is cleared.
+  assert.equal(session.enter('token-a'), false);
+  assert.deepEqual(stops.pending(), [{ threadId: 't1', commandId: 'c1', failed: false }], 'still known, with its command id to watch again');
+  assert.equal(stops.phase('t1', 5000), 'stopping');
+  assert.equal(stops.phase('t1', STOP_WAIT_MS + 1), 'queued', 'and it reads as queued again on the way back');
+  assert.equal(await stops.press('t1', run, STOP_WAIT_MS + 2), 'ignored', 'so the row and the message box still send nothing more');
+  assert.equal(sent, 1);
+  assert.equal(drafts.get('t1'), 'half a thought');
+  // Signed out and in as someone else.
+  assert.equal(session.enter('token-b'), true);
+  assert.deepEqual(stops.pending(), []);
+  assert.equal(drafts.get('t1'), '');
+});
+
+test('only an outright not-found says a thread has gone; any other error says nothing', () => {
+  const notFound = Object.assign(new Error('no such thread'), { data: { kind: 'notFound', message: 'no such thread' } });
+  const auth = Object.assign(new Error('bad token'), { data: { kind: 'auth' } });
+  const row = { status: 'running' };
+  assert.equal(rowAnswer(row), row);
+  assert.equal(rowAnswer(undefined), undefined, 'not answered yet');
+  assert.equal(rowAnswer(notFound), null, 'gone');
+  assert.equal(rowAnswer(new Error('Server Error')), undefined, 'a backend error is not an answer');
+  assert.equal(rowAnswer(auth), undefined);
+  // So during a gap in the lists with the lookup failing, the chat stays and so does its box.
+  assert.equal(goneConfirmed(JUNO, rowAnswer(new Error('Server Error')) as undefined), 'checking');
+  assert.equal(goneConfirmed(JUNO, rowAnswer(notFound) as null), 'gone');
+});
+
+test('a failed Stop is dropped once its thread is known not to be working, and kept while that is unknown', async () => {
+  const stops = makeStops<string>();
+  await stops.press('t1', async () => 'c1', 0);
+  stops.saw('t1', { busy: true, command: { state: 'failed', note: 'no such turn' } }, 10);
+  assert.equal(stops.phase('t1', 20), 'failed');
+  // Missing from the lists and its lookup erroring: unknown. Kept.
+  stops.saw('t1', {}, 30);
+  assert.equal(stops.pending().length, 1);
+  stops.saw('t1', { busy: true }, 40);
+  assert.equal(stops.phase('t1', 50), 'failed', 'still working: the failure still stands, to be tried again');
+  // Seen idle, or confirmed gone (which the page passes as not working): dropped, so nothing goes on watching it.
+  stops.saw('t1', { busy: false }, 60);
+  assert.deepEqual(stops.pending(), []);
+  // A Stop whose send itself failed, the same.
+  await stops.press('t2', async () => Promise.reject(new Error('offline')), 0);
+  stops.saw('t2', { busy: false }, 10);
+  assert.deepEqual(stops.pending(), []);
 });

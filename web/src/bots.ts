@@ -247,8 +247,11 @@ export function tasksShown<T extends BotThread>(tasks: T[], cap: number): { rows
 export const isBusy = (t: { status: string }) => busy(t);
 
 // How long a Stop waits to be seen to have worked before the page says it's
-// queued (and, once its command is done, how long a thread may still read as
-// working before that counts as a new turn).
+// queued. Also, once its command is done, how long the thread may go on
+// reading as working before another attempt is allowed: the row gives no
+// sign of which turn it's on, so this proves nothing about a new turn, it
+// only stops a Stop that did nothing from blocking the button for good.
+// Seeing the thread idle is the real release, and is used whenever it comes.
 export const STOP_WAIT_MS = 20_000;
 export type StopPhase = 'idle' | 'stopping' | 'queued' | 'failed';
 type StopEntry<C> = { at: number; commandId?: C; state?: string; doneAt?: number; error?: string };
@@ -265,8 +268,9 @@ type StopEntry<C> = { at: number; commandId?: C; state?: string; doneAt?: number
  * new turn has begun, and stop that one. `press` does nothing while one is
  * `stopping` or `queued` (not confirmed after STOP_WAIT_MS: it will apply
  * when the Mac is back). A new Stop is allowed only once the first is over:
- * it failed, or its command is done and the thread has been seen stopped,
- * or seen still working long enough after that to be a new turn.
+ * it failed, or its command is done and the thread has been seen idle;
+ * failing that, done and still reading as working after STOP_WAIT_MS, which
+ * allows another attempt without knowing why (see STOP_WAIT_MS).
  * A thread missing from the lists is not known to have stopped (`busy`
  * undefined): only a row saying so lets go.
  */
@@ -311,7 +315,15 @@ export function makeStops<C = string>() {
     /** What's been seen since: whether the thread is working (undefined: not known), and its stop command's state. */
     saw(threadId: string, seen: { busy?: boolean; command?: { state: string; note?: string } }, now: number) {
       const e = entries.get(threadId);
-      if (!e || e.error !== undefined) return;
+      if (!e) return;
+      if (e.error !== undefined) {
+        // A failure that's been said is dropped once the thread is known not to be working (or gone).
+        if (seen.busy === false) {
+          entries.delete(threadId);
+          changed();
+        }
+        return;
+      }
       const before = `${e.state} ${e.doneAt}`;
       if (seen.command) e.state = seen.command.state;
       if (e.state === 'failed') {
@@ -321,7 +333,8 @@ export function makeStops<C = string>() {
       }
       if (e.state === 'done') {
         e.doneAt ??= now;
-        // Over: the thread has stopped, or is working again on what must be a new turn.
+        // Over: the thread has been seen idle. Or, with no such sighting, it has read as working
+        // long enough since that another attempt is allowed.
         if (seen.busy === false || (seen.busy === true && now - e.doneAt >= STOP_WAIT_MS)) {
           entries.delete(threadId);
           changed();
@@ -344,6 +357,40 @@ export function makeStops<C = string>() {
     version: () => version,
   };
 }
+
+/**
+ * A row read directly (phone:threadRow), as useQueries hands it back: the
+ * row; null only when the backend says outright there is no such thread;
+ * undefined for no answer yet and for any other error, which says nothing
+ * about the thread. So a backend hiccup never reads as "gone" or "stopped".
+ */
+export function rowAnswer<R extends object>(answer: R | Error | undefined): R | null | undefined {
+  if (!(answer instanceof Error)) return answer;
+  return (answer as { data?: { kind?: unknown } }).data?.kind === 'notFound' ? null : undefined;
+}
+
+/**
+ * Keeps what belongs to one sign-in (pending Stops, drafts) for exactly as
+ * long as that sign-in: `enter` with the token each time the page shows,
+ * and the clearers run only when the token is not the last one seen.
+ * Leaving the page and coming back clears nothing, as a Stop still queued
+ * in the backend must still be known here.
+ */
+export function makeSession(clearers: (() => void)[]) {
+  let last: string | undefined;
+  return {
+    enter(token: string): boolean {
+      if (token === last) return false;
+      const first = last === undefined;
+      last = token;
+      if (!first) clearers.forEach((c) => c());
+      return !first;
+    },
+  };
+}
+
+// Said beside a Stop while it's queued.
+export const QUEUED_STOP_WARNING = 'A queued Stop cannot be canceled here and may stop a later turn when the Mac reconnects.';
 
 /**
  * What's typed and not sent, by thread, kept by the page while it's loaded:
