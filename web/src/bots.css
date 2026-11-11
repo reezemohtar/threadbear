@@ -49,7 +49,7 @@
   --bubble: var(--b-botb);
   background: var(--b-pane);
 }
-.bots { grid-column: 2 / -1; min-width: 0; min-height: 0; display: flex; color: var(--b-t1); font-size: 14px; line-height: 20px; }
+.bots { position: relative; grid-column: 2 / -1; min-width: 0; min-height: 0; display: flex; color: var(--b-t1); font-size: 14px; line-height: 20px; }
 .bot-avatar { display: block; flex: none; }
 
 /* ---- the list */
@@ -156,8 +156,10 @@
 /* Not wide enough for three columns: the pane goes. */
 @media (max-width: 1099px) {
   .bots-pane { display: none; }
-  .bots-island { pointer-events: none; }
+  /* Opened from the pill, it lies over the chat. */
+  .bots.over .bots-pane { display: flex; position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; box-shadow: -1px 0 0 var(--b-b2); }
 }
+@media (max-width: 760px) { .bots.over .bots-pane { left: 0; width: auto; } }
 /* A phone, or a narrow panel on the Mac: the list, or the chat. */
 @media (max-width: 760px) {
   .bots { grid-column: 1; }
@@ -269,3 +271,27 @@
 .bots-li { align-items: center; gap: 8px; padding: 7px 8px; }
 .bots-thumb { flex: none; width: 18px; height: 18px; border-radius: 4px; object-fit: cover; background: var(--b-fill2); }
 .bots-tabs + .bots-quiet, .bots-chips + .bots-quiet { margin-top: 18px; }
+
+/* ---- tasks (stage A, slice 1): a bot's background threads, in the pane */
+.bots-task { display: flex; align-items: center; gap: 4px; border-radius: 8px; }
+.bots-task:hover { background: var(--b-hover); }
+.bots-task.on { background: var(--b-active); }
+.bots-task-open { flex: 1; min-width: 0; display: block; padding: 6px 8px; color: var(--b-t1); font-size: 13px; line-height: 18px; }
+.bots-task-open:hover { text-decoration: none; }
+.bots-task-top { display: flex; align-items: baseline; gap: 6px; }
+.bots-task-line { display: block; font-size: 12px; line-height: 16px; color: var(--b-t3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bots-task-line.needs { color: var(--b-warn-text); }
+.bots-task-line.failed { color: var(--b-danger); }
+.bots-task-line.working { color: var(--b-t2); }
+.bots-stop { flex: none; width: 28px; height: 28px; margin-right: 4px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--b-fill2); color: var(--b-t2); }
+.bots-stop:hover:not(:disabled) { background: var(--b-active); color: var(--b-t1); }
+.bots-stop:focus-visible, .bots-to-main:focus-visible { outline: 2px solid var(--b-info); outline-offset: 1px; }
+.bots-stop svg { width: 12px; height: 12px; }
+.bots-card + .bots-label { margin-top: 18px; }
+/* The pill: how many tasks are open, and when a task is what's open. */
+.bots-island-chat b { margin-right: 6px; padding: 1px 6px; border-radius: 99px; background: var(--b-fill2); font-size: 11px; font-weight: 500; color: var(--b-t2); }
+.bots-island-tasks { flex: none; padding: 1px 8px; border-radius: 99px; background: var(--b-fill2); font-size: 12px; line-height: 18px; font-weight: 400; color: var(--b-t2); }
+.bots-to-main { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); z-index: 3; height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 8px; border-radius: 99px; background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); font-size: 13px; color: var(--b-t1); }
+.bots-to-main:hover { text-decoration: none; color: var(--b-t1); }
+.bots-to-main svg { width: 12px; height: 12px; }
+.bots-main.task .messages { padding-top: 44px; }

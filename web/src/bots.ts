@@ -37,6 +37,10 @@ export type BotThread = {
   projects?: { id: string }[];
   asks?: { action: string }[];
   pendingApproval?: unknown;
+  createdAt?: string;
+  // Who started it, when it wasn't the owner: `kind` 'thread' is another
+  // thread's agent, which is what makes it a task (isTask).
+  startedBy?: { kind: string; label?: string };
 };
 
 export type Section = 'business' | 'personal';
@@ -71,8 +75,12 @@ export type Bot = {
   unread: number;
   // When it was last active, for the row's time and the order.
   at: number;
-  // Its newest open thread, which is the chat a click opens.
+  // Its main chat, which is the chat a click opens (mainChat): never a task.
   threadId?: string;
+  // Its open tasks (threads its agent started) waiting on you, and working.
+  // Counted apart from the main chat, so neither is counted twice.
+  tasksWaiting: number;
+  tasksWorking: number;
 };
 
 /**
@@ -157,13 +165,85 @@ export function threadsOf<T extends BotThread>(bot: BotKey, threads: T[]): T[] {
 }
 
 /**
+ * A task: a thread another thread's agent started, as a bot does when it
+ * hands a job to the background. With today's data that's all that marks
+ * one, so a thread the owner started by hand is never a task, whatever it
+ * was for.
+ */
+export const isTask = (t: BotThread) => t.startedBy?.kind === 'thread';
+
+const born = (t: BotThread) => {
+  const at = Date.parse(t.createdAt ?? '');
+  return Number.isFinite(at) ? at : t.lastActivityMs;
+};
+
+/**
+ * A bot's main chat: of its open threads that aren't tasks, the starred one
+ * if there is one, else the oldest. Nothing is stored for this yet, so it has
+ * to be a rule that gives the same answer on every reload: the newest thread
+ * doesn't, as every task a bot starts, and every new chat, would take the
+ * place over. The oldest stays the oldest; a star is how the owner names
+ * another. Between two starred, or two as old as each other, the older, then
+ * the lower id.
+ */
+export function mainChat<T extends BotThread>(bot: BotKey, threads: T[]): T | undefined {
+  const mine = threadsOf(bot, threads).filter((t) => isLive(t) && !isTask(t));
+  const starred = mine.filter((t) => !!t.starredAt);
+  return (starred.length ? starred : mine).sort((a, b) => born(a) - born(b) || a.threadId.localeCompare(b.threadId))[0];
+}
+
+/**
  * The chat to show for a bot: the one already open (`held`) while it's still
- * one of the bot's open threads, so the chat doesn't change under what's
- * being typed when another thread becomes the newest; else its newest.
+ * one of the bot's open chats, so it doesn't change under what's being typed;
+ * else its main chat. Never a task: those are opened by name, from the list.
  */
 export function chatFor(bot: BotKey, threads: BotThread[], held?: string): string | undefined {
-  const live = threadsOf(bot, threads).filter(isLive);
-  return held && live.some((t) => t.threadId === held) ? held : live[0]?.threadId;
+  const chats = threadsOf(bot, threads).filter((t) => isLive(t) && !isTask(t));
+  return held && chats.some((t) => t.threadId === held) ? held : mainChat(bot, threads)?.threadId;
+}
+
+/** A bot's tasks out of these, newest first, each once. Archived ones too. */
+export function tasksOf<T extends BotThread>(bot: BotKey, threads: T[]): T[] {
+  return threadsOf(bot, threads).filter(isTask);
+}
+
+export type TaskStatus = 'needs' | 'working' | 'failed' | 'finished';
+
+/**
+ * What a task's row says, from the thread's own state. `finished` is every
+ * task that isn't working, waiting or failed, which today includes one that
+ * was stopped: a stopped turn ends the same way a finished one does, and
+ * nothing the website is given tells them apart.
+ */
+export function taskStatus(t: BotThread): TaskStatus {
+  if (t.needsYou || !!t.pendingApproval) return 'needs';
+  if (busy(t)) return 'working';
+  return t.status === 'error' ? 'failed' : 'finished';
+}
+
+/**
+ * One press at a time for each key (a thread's Stop): a press while that
+ * key's is still going, or has gone and not been released, does nothing, so
+ * Stop pressed twice sends one stop. `release` lets it be pressed again
+ * (the thread stopped, or was started again); a failed press releases itself.
+ */
+export function latchPerKey<K>(run: (key: K) => Promise<unknown>): { press: (key: K) => Promise<'sent' | 'ignored' | 'failed'>; held: (key: K) => boolean; release: (key: K) => void } {
+  const latched = new Set<K>();
+  return {
+    async press(key) {
+      if (latched.has(key)) return 'ignored';
+      latched.add(key);
+      try {
+        await run(key);
+        return 'sent';
+      } catch {
+        latched.delete(key);
+        return 'failed';
+      }
+    },
+    held: (key) => latched.has(key),
+    release: (key) => void latched.delete(key),
+  };
 }
 
 /**
@@ -268,6 +348,23 @@ export function lineOf(live: BotThread[]): string {
   return plain(newest.preview) || newest.title || 'No messages yet';
 }
 
+const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+
+/**
+ * The row's line: the main chat's own (lineOf), unless the main chat has
+ * nothing pressing and its tasks do. A main chat that's asking always wins,
+ * as it's what a click opens.
+ */
+export function botLine(main: BotThread | undefined, tasksWaiting: number, tasksWorking: number, chatsWaiting = 0): string {
+  const own = lineOf(main ? [main] : []);
+  if (main && (waiting(main) || (busy(main) && !tasksWaiting))) return own;
+  if (tasksWaiting) return count(tasksWaiting, 'task needs you', 'tasks need you');
+  // Another of its chats, not the main one: say so, or the amber mark would sit beside the main chat's words.
+  if (chatsWaiting) return count(chatsWaiting, 'other chat needs you', 'other chats need you');
+  if (tasksWorking) return `Working on ${count(tasksWorking, 'task', 'tasks')}`;
+  return own;
+}
+
 export type BotLists = { pinned: Bot[]; business: Bot[]; personal: Bot[] };
 
 /** Every bot among these projects, in the lists the page shows. */
@@ -278,7 +375,12 @@ export function buildBots(projects: BotProject[], threads: BotThread[]): BotList
     const folder = botFolder(p.folders);
     if (!folder || p.archived || seen.has(p.id)) continue;
     seen.add(p.id);
-    const live = threadsOf({ id: p.id, runnerId: p.runnerId, folder }, threads).filter(isLive);
+    const key = { id: p.id, runnerId: p.runnerId, folder };
+    const live = threadsOf(key, threads).filter(isLive);
+    const main = mainChat(key, threads);
+    const tasks = live.filter(isTask);
+    const tasksWaiting = tasks.filter(waiting).length;
+    const tasksWorking = tasks.filter((t) => !waiting(t) && busy(t)).length;
     const newest = live[0];
     const last = Date.parse(p.lastActivityAt ?? p.updatedAt ?? '');
     const bot: Bot = {
@@ -291,10 +393,12 @@ export function buildBots(projects: BotProject[], threads: BotThread[]): BotList
       pinned: live.some((t) => !!t.starredAt),
       look: lookOf(p.id),
       status: statusOf(live),
-      line: lineOf(live),
+      line: botLine(main, tasksWaiting, tasksWorking, live.filter((t) => !isTask(t) && t.threadId !== main?.threadId && waiting(t)).length),
       unread: live.filter((t) => t.unread).length,
       at: newest?.lastActivityMs ?? (Number.isFinite(last) ? last : 0),
-      ...(newest ? { threadId: newest.threadId } : {}),
+      ...(main ? { threadId: main.threadId } : {}),
+      tasksWaiting,
+      tasksWorking,
     };
     (bot.pinned ? out.pinned : out[bot.section]).push(bot);
   }

@@ -70,6 +70,13 @@ const threads: Thread[] = [
   thread('site-0001', 'Landing page copy', 'Draft two is up.', 30),
 ];
 
+// Juno's tasks: threads its agent started in the background. The newest by
+// far is one of them, which is what used to take the main chat's place.
+const byJuno = { startedBy: { kind: 'thread', label: 'Juno · Router' } };
+threads.push(thread('juno-0008', 'Check the three venues', 'Comparing prices.', 0, { ...byJuno, status: 'running', working: 'Reading the second venue page' }));
+threads.push(thread('juno-0008', 'Draft the weekly summary', 'The draft is ready.', 12, { ...byJuno, needsYou: true, needs: 'you', asksSeq: 2, asks: [{ action: 'Send the weekly summary as drafted?', options: ['Send it', 'Not yet'] }] }));
+threads.push(thread('juno-0008', 'Tidy the notes folder', 'Moved 14 notes into place.', 95, byJuno));
+
 for (let i = 0; i < STRESS; i++) {
   // One bot in four has no open chat.
   if (i % 4 === 0) continue;

@@ -49,6 +49,13 @@ folding sections. Web only, still the `bots` experiment, off by default.
 | `web/src/App.tsx` | `ThreadView`, `Dock` and `ApprovalCard` take an optional `chat` (type `ChatLook`), passed only by the Bots page. With it: the dock's card is drawn through a portal into a slot in the conversation, a line is drawn for each new day, the message box says "Message <name>" and can hold a tool beside Send, and an approval gets a label and a Details fold. Two imports. | The reference shows cards in the conversation and a mic in the message box. The card, its state and what it sends are the same code either way; without `chat` nothing changes. Rebased onto release 2026-11-11 (main `855d383e`): Mike's recap box above the dock, his Stop button in place of Send while a turn runs, his Recommended mark and option notes are all kept as he wrote them; the `chat` props sit beside them (the mic's tool goes before his Send/Stop block, the card slot is watched for size so its buttons stay in view, and in a chat an approval's buttons are rendered in shown order) |
 | `docs/website.md`, `docs/experiments.md` | The Bots section and the experiment's text | Repo rule: docs stay true |
 
+## Bots page, tasks (branch `reeze/bots-tasks`, 11 Nov 2026)
+
+Stage A, slice 1: a bot's background threads are listed as its Tasks, with
+Stop, and no longer take the place of its main chat. Web only, in the Bots
+files (`bots.ts`, `bots-page.tsx`, `bots.css`, the mock) and the docs. No
+existing file of Mike's was edited for it: `App.tsx` is untouched.
+
 ## Fixes to Mike's code, until his release has them
 
 | File | Change | Why |

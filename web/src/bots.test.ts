@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, latchPerKey, mainChat, taskStatus, tasksOf } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -102,7 +102,7 @@ test('bots go under Business and Personal, with starred ones pinned and the rest
     project('old', { title: 'Old bot', archived: true }),
     project('juno', { title: 'Juno again' }),
   ];
-  const threads = [thread({ projects: [{ id: 'wren' }], starredAt: '2026-11-01T00:00:00Z' }), thread({ projects: [{ id: 'juno' }], unread: true, preview: 'All sorted.' }), thread({ projects: [{ id: 'juno' }], unread: true }), thread({ projects: [{ id: 'site' }] })];
+  const threads = [thread({ projects: [{ id: 'wren' }], starredAt: '2026-11-01T00:00:00Z' }), thread({ projects: [{ id: 'juno' }], unread: true, preview: 'All sorted.', createdAt: '2026-11-01T00:00:00Z' }), thread({ projects: [{ id: 'juno' }], unread: true, createdAt: '2026-11-05T00:00:00Z' }), thread({ projects: [{ id: 'site' }] })];
   const lists = buildBots(projects, threads);
   assert.deepEqual(titles(lists.pinned), ['Wren']);
   assert.deepEqual(titles(lists.business), ['Juno']);
@@ -179,13 +179,13 @@ test("a chat named in the address must be one of the bot's, archived or not", ()
   assert.equal(belongs(juno, thread({ cwd: '/Users/me/work/bots/juno' })), true);
 });
 
-test('the open chat stays while it is still open, however new another gets', () => {
+test('the open chat stays while it is still open, and a new one never takes its place', () => {
   const bot = { id: 'juno', runnerId: 'r1', folder: '/Users/me/work/bots/juno' };
-  const first = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW - 5000 });
+  const first = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW - 5000, createdAt: '2026-11-01T00:00:00Z' });
   assert.equal(chatFor(bot, [first]), first.threadId);
-  const newer = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW });
-  assert.equal(chatFor(bot, [first, newer]), newer.threadId, 'nothing held: the newest');
-  assert.equal(chatFor(bot, [first, newer], first.threadId), first.threadId, 'held: it stays');
+  const newer = thread({ projects: [{ id: 'juno' }], lastActivityMs: NOW, createdAt: '2026-11-09T00:00:00Z' });
+  assert.equal(chatFor(bot, [first, newer]), first.threadId, 'nothing held: the main chat, not the newest');
+  assert.equal(chatFor(bot, [first, newer], newer.threadId), newer.threadId, 'another chat, opened and held: it stays');
   assert.equal(chatFor(bot, [{ ...first, view: 'den', archivedAt: '2026-11-11T00:00:00Z' }, newer], first.threadId), newer.threadId, 'put away: move on');
   assert.equal(chatFor(bot, [newer], 'someone-elses'), newer.threadId);
   assert.equal(chatFor(bot, []), undefined);
@@ -404,4 +404,136 @@ test('the message box shows Stop while a turn runs and Send cannot be pressed', 
   assert.equal(shows(true, false, true), 'stop');
   assert.equal(shows(false, true, true), 'send', 'no turn to stop: Send, held until the mic is done');
   assert.equal(shows(false, false, true), 'send');
+});
+
+// ---- tasks (stage A, slice 1)
+const JUNO = { id: 'juno', runnerId: 'r1', folder: '/Users/me/work/bots/juno' };
+const chat = (over: Partial<BotThread> = {}) => thread({ projects: [{ id: 'juno' }], ...over });
+const task = (over: Partial<BotThread> = {}) => thread({ projects: [{ id: 'juno' }], startedBy: { kind: 'thread', label: 'Juno' }, ...over });
+
+test('a thread is a task only when another thread started it', () => {
+  assert.equal(isTask(task()), true);
+  assert.equal(isTask(chat()), false, 'started by the owner');
+  assert.equal(isTask(chat({ startedBy: { kind: 'schedule', label: 'Every morning' } })), false);
+  assert.equal(isTask(chat({ startedBy: { kind: 'phone', label: 'Phone' } })), false);
+});
+
+test("a new task does not take over the bot's chat", () => {
+  const main = chat({ createdAt: '2026-11-01T00:00:00Z', lastActivityMs: NOW - 60_000, preview: 'On it.' });
+  const before = buildBots([project('juno')], [main]).business[0]!;
+  assert.equal(before.threadId, main.threadId);
+  // The bot starts a job in the background: it is now the newest thread by far.
+  const job = task({ createdAt: '2026-11-11T09:59:00Z', lastActivityMs: NOW, status: 'running', working: 'Rendering' });
+  const after = buildBots([project('juno')], [job, main]).business[0]!;
+  assert.equal(after.threadId, main.threadId, 'a reload still opens the main chat');
+  assert.equal(chatFor(JUNO, [job, main]), main.threadId);
+  assert.equal(chatFor(JUNO, [job, main], job.threadId), main.threadId, 'a task is never held as the chat');
+  assert.deepEqual(tasksOf(JUNO, [job, main]).map((t) => t.threadId), [job.threadId]);
+  // A bot with only tasks has no main chat, rather than a task standing in for one.
+  assert.equal(buildBots([project('juno')], [job]).business[0]!.threadId, undefined);
+});
+
+test('the main chat is the starred one, else the oldest, the same on every reload', () => {
+  const oldest = chat({ createdAt: '2026-10-01T00:00:00Z', lastActivityMs: NOW - 9_000_000 });
+  const middle = chat({ createdAt: '2026-10-20T00:00:00Z', lastActivityMs: NOW });
+  const newest = chat({ createdAt: '2026-11-10T00:00:00Z', lastActivityMs: NOW - 1000 });
+  const all = [newest, middle, oldest];
+  assert.equal(mainChat(JUNO, all)?.threadId, oldest.threadId, 'the oldest, however quiet');
+  assert.equal(mainChat(JUNO, [...all].reverse())?.threadId, oldest.threadId, 'whatever order they arrive in');
+  // Activity moves; the answer does not.
+  assert.equal(mainChat(JUNO, [{ ...newest, lastActivityMs: NOW + 5000 }, middle, oldest])?.threadId, oldest.threadId);
+  // New tasks and a new chat arrive: still the same.
+  assert.equal(mainChat(JUNO, [task({ lastActivityMs: NOW + 9000 }), chat({ createdAt: '2026-11-11T09:00:00Z' }), ...all])?.threadId, oldest.threadId);
+  // A star names another; two stars, the older of them.
+  const starred = { ...middle, starredAt: '2026-11-02T00:00:00Z' };
+  assert.equal(mainChat(JUNO, [newest, starred, oldest])?.threadId, middle.threadId);
+  assert.equal(mainChat(JUNO, [{ ...newest, starredAt: '2026-11-03T00:00:00Z' }, starred, oldest])?.threadId, middle.threadId);
+  // A starred task is still a task.
+  assert.equal(mainChat(JUNO, [task({ starredAt: '2026-11-04T00:00:00Z', createdAt: '2026-09-01T00:00:00Z' }), oldest])?.threadId, oldest.threadId);
+  // Once the main chat is archived, the next oldest.
+  assert.equal(mainChat(JUNO, [newest, middle, { ...oldest, view: 'den', archivedAt: '2026-11-11T00:00:00Z' }])?.threadId, middle.threadId);
+  assert.equal(mainChat(JUNO, []), undefined);
+});
+
+test('two tasks finishing together both show, each with its own status', () => {
+  const a = task({ title: 'Voice files', lastActivityMs: NOW });
+  const b = task({ title: 'Captions', lastActivityMs: NOW, status: 'error' });
+  const c = task({ title: 'Render', lastActivityMs: NOW - 1000, status: 'running', working: 'Frame 40 of 90' });
+  const d = task({ title: 'Upload', lastActivityMs: NOW - 2000, needsYou: true });
+  const list = tasksOf(JUNO, [a, b, c, d, chat()]);
+  assert.equal(list.length, 4, 'every task, none merged, the chat left out');
+  assert.deepEqual(Object.fromEntries(list.map((t) => [t.title, taskStatus(t)])), { 'Voice files': 'finished', Captions: 'failed', Render: 'working', Upload: 'needs' });
+  assert.equal(tasksOf(JUNO, [a, a, b]).length, 2, 'each once');
+});
+
+test('only a working task can be stopped, and a stopped one reads as finished', () => {
+  const canStop = (t: BotThread) => taskStatus(t) === 'working';
+  assert.equal(canStop(task({ status: 'running' })), true);
+  assert.equal(canStop(task({ status: 'starting' })), true);
+  assert.equal(canStop(task()), false, 'finished');
+  assert.equal(canStop(task({ status: 'error' })), false);
+  assert.equal(canStop(task({ needsYou: true, status: 'running' })), false, 'waiting on an answer, not on a Stop');
+  // Today's limit, said plainly: an interrupted turn ends idle, the same as a finished one.
+  assert.equal(taskStatus(task({ status: 'idle' })), 'finished');
+});
+
+test('Stop pressed twice sends one stop', async () => {
+  const sent: string[] = [];
+  let done: () => void = () => {};
+  const stops = latchPerKey(async (id: string) => {
+    sent.push(id);
+    await new Promise<void>((r) => (done = r));
+  });
+  const first = stops.press('t1');
+  assert.equal(await stops.press('t1'), 'ignored');
+  assert.equal(stops.held('t1'), true);
+  done();
+  assert.equal(await first, 'sent');
+  assert.equal(await stops.press('t1'), 'ignored', 'still held until the task is seen to have stopped');
+  assert.deepEqual(sent, ['t1']);
+  // Another task has its own.
+  const other = stops.press('t2');
+  done();
+  assert.equal(await other, 'sent');
+  // Seen stopped, then working again later: it can be stopped again.
+  stops.release('t1');
+  const again = stops.press('t1');
+  done();
+  assert.equal(await again, 'sent');
+  assert.deepEqual(sent, ['t1', 't2', 't1']);
+  // A stop that fails lets go, so it can be tried again.
+  const failing = latchPerKey(async () => {
+    throw new Error('offline');
+  });
+  assert.equal(await failing.press('t9'), 'failed');
+  assert.equal(failing.held('t9'), false);
+});
+
+test('tasks that need you are counted apart from the main chat, neither twice', () => {
+  const main = chat({ createdAt: '2026-11-01T00:00:00Z', needsYou: true, asks: [{ action: 'Approve the script?' }] });
+  const waiting1 = task({ needsYou: true });
+  const waiting2 = task({ pendingApproval: { kind: 'approval' } });
+  const working = task({ status: 'running' });
+  const done = task();
+  const gone = task({ needsYou: true, view: 'den', archivedAt: '2026-11-10T00:00:00Z' });
+  const bot = buildBots([project('juno')], [main, waiting1, waiting2, working, done, gone]).business[0]!;
+  assert.equal(bot.tasksWaiting, 2, 'two open tasks, not the main chat, not the archived one');
+  assert.equal(bot.tasksWorking, 1);
+  assert.equal(bot.status, 'needs');
+  assert.equal(bot.line, 'Approve the script?', 'the main chat is asking: its own line, as a click opens it');
+  // The main chat quiet: the tasks speak.
+  const quiet = buildBots([project('juno')], [{ ...main, needsYou: false, asks: undefined, preview: 'All done.' }, waiting1, waiting2, working]).business[0]!;
+  assert.equal(quiet.line, '2 tasks need you');
+  assert.equal(quiet.tasksWaiting, 2);
+  assert.equal(botLine(main, 0, 0), 'Approve the script?');
+  assert.equal(botLine({ ...main, needsYou: false, asks: undefined, preview: 'All done.' }, 0, 3), 'Working on 3 tasks');
+  assert.equal(botLine({ ...main, needsYou: false, asks: undefined, preview: 'All done.' }, 1, 3), '1 task needs you');
+  assert.equal(botLine(undefined, 0, 1), 'Working on 1 task');
+  assert.equal(botLine(undefined, 0, 0), 'No open chat');
+  // A second chat of the bot's, not a task and not the main one, is waiting.
+  const second = chat({ createdAt: '2026-11-09T00:00:00Z', needsYou: true });
+  const two = buildBots([project('juno')], [{ ...main, needsYou: false, asks: undefined, preview: 'All done.' }, second]).business[0]!;
+  assert.equal(two.threadId, main.threadId);
+  assert.equal(two.line, '1 other chat needs you');
+  assert.equal(two.tasksWaiting, 0, 'a chat is not a task');
 });

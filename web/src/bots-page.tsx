@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatFor, COLORS, isLive, libraryChips, libraryOf, liveOf, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
+import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatFor, COLORS, isLive, isTask, latchPerKey, libraryChips, libraryOf, liveOf, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, taskStatus, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
 import { Mic } from './bots-mic';
 import type { ChatLook } from './App';
 import { projectLoader } from './bots-loader';
@@ -186,7 +186,20 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
   const open = asked ? (named === 'ok' ? asked : undefined) : newest;
   const openRow = asked ? (open ? (askedRow ?? undefined) : undefined) : threads.find((t) => t.threadId === open);
 
+  // A task, opened by name from the Tasks list: said in the pill, with a way
+  // back to the main chat.
+  const openTask = !!openRow && isTask(openRow);
+  const liveTasks = bot ? tasksOf(bot, threads).filter(isLive).length : 0;
+  // Where there's no room for the pane beside the chat (a phone, a narrow
+  // panel), the pill opens it over the chat instead.
+  const [over, setOver] = useState(false);
+  useEffect(() => setOver(false), [id]);
+  const narrow = () => matchMedia('(max-width: 1099px)').matches;
   const togglePane = () => {
+    if (narrow()) {
+      setOver(!over);
+      return;
+    }
     localStorage.setItem(PANE_KEY, pane ? '0' : '1');
     setPane(!pane);
   };
@@ -214,7 +227,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
   };
 
   return (
-    <div className={`bots ${botId ? 'has-bot' : ''}`}>
+    <div className={`bots ${botId ? 'has-bot' : ''} ${over ? 'over' : ''}`}>
       <aside className="bots-list">
         <header className="bots-bar">
           {searching ? (
@@ -275,15 +288,36 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
         </nav>
       </aside>
       {bot ? (
-        <section className={`bots-main ${tint(bot).className}`} style={tint(bot).style}>
+        <section className={`bots-main ${tint(bot).className} ${openTask ? 'task' : ''}`} style={tint(bot).style}>
           {/* The bot, and which of its chats this is: the thread view's own title is hidden under it. */}
           <button className="bots-island" onClick={togglePane} title={[openRow ? `${openRow.title || 'Untitled'}, in ${openRow.cwd}` : '', pane ? 'Hide the details' : 'Show the details'].filter(Boolean).join('. ')}>
             <Avatar look={bot.look} size={24} />
             <span className="bots-island-name">{bot.title}</span>
-            {openRow ? <span className="bots-island-chat">{openRow.title || 'Untitled'}</span> : null}
+            {openRow ? (
+              <span className="bots-island-chat">
+                {openTask ? <b>Task</b> : null}
+                {openRow.title || 'Untitled'}
+              </span>
+            ) : null}
+            {!openTask && liveTasks ? <span className="bots-island-tasks">{liveTasks === 1 ? '1 task' : `${liveTasks} tasks`}</span> : null}
           </button>
+          {openTask ? (
+            <a
+              className="bots-to-main"
+              href={botPath(bot.id)}
+              title={`Back to ${bot.title}'s main chat`}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) return;
+                e.preventDefault();
+                go(botPath(bot.id));
+              }}
+            >
+              <Icon.Back />
+              Main chat
+            </a>
+          ) : null}
           {open ? (
-            thread(open, botPath(), { name: bot.title, tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })
+            thread(open, botPath(), { name: openTask ? 'this task' : bot.title, tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })
           ) : asked ? (
             <NotItsChat bot={bot} checking={named === 'checking'} />
           ) : (
@@ -296,7 +330,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
           <div className="bots-blank">{lists && botId && !done && failed ? <Unread count={failed} retry={retry} /> : !lists || (botId && !done) ? 'Loading…' : botId ? 'That bot has gone.' : count ? 'Pick a bot.' : ''}</div>
         </section>
       )}
-      {bot && pane ? <Pane token={token} bot={bot} threads={threads} open={open} close={togglePane} /> : null}
+      {bot && (pane || over) ? <Pane token={token} bot={bot} threads={threads} open={open} close={togglePane} /> : null}
     </div>
   );
 }
@@ -532,9 +566,12 @@ function Pane({ token, bot, threads, open, close }: { token: string; bot: Bot; t
 
 function Activity({ token, bot, threads, open }: { token: string; bot: Bot; threads: Parameters<typeof threadsOf>[1]; open?: string }) {
   const joined = useLiveQuery(api.phone.projectThreads, { token, projectId: bot.id, limit: RECENT });
-  const recent = threadsOf(bot, [...threads, ...(joined ?? [])]).slice(0, RECENT);
+  const all = [...threads, ...(joined ?? [])];
+  // Tasks have a list of their own, so the chats are the rest.
+  const recent = threadsOf(bot, all).filter((t) => !isTask(t)).slice(0, RECENT);
   return (
     <>
+      <Tasks token={token} bot={bot} tasks={tasksOf(bot, all).slice(0, RECENT)} open={open} />
       <div className="bots-label">Recent chats</div>
       {recent.length ? (
         <div className="bots-card">
@@ -590,6 +627,66 @@ function Library({ token, threadId }: { token: string; threadId?: string }) {
             <span className="bots-li-title">Picture {library[on].length - i}</span>
           </a>
         ))}
+      </div>
+    </>
+  );
+}
+
+const TASK_WORDS = { needs: 'Needs you', working: 'Working', failed: 'The last turn failed', finished: 'Finished' } as const;
+
+// A bot's tasks: the threads its agent started to do a job in the background.
+// Each row is the thread's own state; a working one can be stopped, with the
+// same stop the message box has (phone:interrupt). Shown only when there are
+// some.
+function Tasks({ token, bot, tasks, open }: { token: string; bot: Bot; tasks: (BotThread & { title: string })[]; open?: string }) {
+  const interrupt = useMutation(api.phone.interrupt);
+  const [, redraw] = useState(0);
+  // One stop for each task until it has stopped: a second press does nothing.
+  const stops = useMemo(() => latchPerKey((threadId: string) => interrupt({ token, threadId })), [interrupt, token]);
+  const [failed, setFailed] = useState<string>();
+  // Once a task is no longer working, its Stop can be pressed again next time.
+  for (const t of tasks) if (taskStatus(t) !== 'working') stops.release(t.threadId);
+  if (!tasks.length) return null;
+  const stop = async (threadId: string) => {
+    setFailed(undefined);
+    const going = stops.press(threadId);
+    redraw((n) => n + 1);
+    if ((await going) === 'failed') setFailed(threadId);
+    redraw((n) => n + 1);
+  };
+  return (
+    <>
+      <div className="bots-label">Tasks</div>
+      <div className="bots-card">
+        {tasks.map((t) => {
+          const status = isLive(t) ? taskStatus(t) : 'finished';
+          const line = status === 'working' ? t.working?.trim() || TASK_WORDS.working : TASK_WORDS[status];
+          return (
+            <div key={t.threadId} className={`bots-task ${t.threadId === open ? 'on' : ''}`}>
+              <a
+                className="bots-task-open"
+                href={botPath(bot.id, t.threadId)}
+                title={status === 'finished' ? 'Open this task. Finished, or stopped: the two look the same for now' : 'Open this task'}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey) return;
+                  e.preventDefault();
+                  go(botPath(bot.id, t.threadId));
+                }}
+              >
+                <span className="bots-task-top">
+                  <span className="bots-li-title">{t.title || 'Untitled'}</span>
+                  <span className="bots-li-when">{ago(t.lastActivityMs)}</span>
+                </span>
+                <span className={`bots-task-line ${status}`}>{failed === t.threadId ? 'Couldn’t stop it. Try again' : line}</span>
+              </a>
+              {status === 'working' ? (
+                <button className="bots-stop" disabled={stops.held(t.threadId)} title={stops.held(t.threadId) ? 'Stopping' : 'Stop this task'} aria-label={stops.held(t.threadId) ? 'Stopping' : `Stop ${t.title || 'this task'}`} onClick={() => void stop(t.threadId)}>
+                  {stops.held(t.threadId) ? <span className="spinner" /> : <Icon.Stop />}
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </>
   );

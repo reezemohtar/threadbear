@@ -161,7 +161,12 @@ that fails is offered again (Try again) and never counts as "not a bot". A
 project given a bots folder later shows after a reload. A new chat starts
 in the folder the live query has for the bot at that moment. Its section is a
 `Section: Personal` line in its goals, its role the first other line; it's
-pinned while one of its open threads is starred; and its threads are the
+pinned while one of its open threads is starred. A thread another thread's
+agent started is one of the bot's tasks (`isTask`): tasks are listed in the
+pane with their state and a Stop, and are never the bot's chat. The chat a
+bot opens is its main chat (`mainChat`): of its open threads that aren't
+tasks, the starred one, else the oldest, which is the same on every reload
+(nothing is stored for it yet). Its threads are the
 inbox's and the hibernating ones in the project, or in its folder on its
 own runner. A chat named in the address (`/bots/<project>~<thread>`) is
 shown only while it's that bot's (its row is watched). The chat is `ThreadView` from `App.tsx`, so
