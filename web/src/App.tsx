@@ -23,7 +23,7 @@ import { busy, Lists, ResizeHandle, type Row, useSidebarWidth } from './sidebar'
 import { Pop } from './menu';
 import { pastedOf } from './picture-chips';
 import { Rail } from './rail';
-import { approvalOrder, botsOn, dayLine, followCard } from './bots';
+import { approvalOrder, botsOn, dayLine, followCard, sendOrStop } from './bots';
 import { LazyBots } from './bots-lazy';
 import { NewThread, ProjectPage, ProjectsList, RunnerPage, RunnersList, ScheduledList, SchedulePage, UsageList, UsagePage } from './pages';
 import { duration, fold, splitTurns, type Item } from './turns';
@@ -563,9 +563,10 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: 
         <div className="tools-row">
           <span className="grow" />
           {chat?.tools?.({ add: (said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said)), hold: setHeld })}
-          {busy(t) && !ready ? (
+          {sendOrStop({ busy: busy(t), ready, held }) === 'stop' ? (
             // Stop only while nothing's typed, as on the Mac: a message
-            // typed during a turn goes into it.
+            // typed during a turn goes into it. (And in a chat while the mic
+            // holds Send, so the turn can still be stopped: sendOrStop.)
             stopping ? (
               <button type="button" className="send" disabled aria-label="Stopping" title="Stopping">
                 <span className="spinner" />

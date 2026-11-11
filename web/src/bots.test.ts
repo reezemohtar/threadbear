@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -390,4 +390,18 @@ test("an approval's buttons are shown and tabbed in one order, the allowing one 
   const given = ['allow', 'deny'];
   approvalOrder(given);
   assert.deepEqual(given, ['allow', 'deny'], 'what the thread sent is left as it was');
+});
+
+test('the message box shows Stop while a turn runs and Send cannot be pressed', () => {
+  const shows = (busy: boolean, ready: boolean, held: boolean) => sendOrStop({ busy, ready, held });
+  // Not in a chat, held is never true: exactly the site's own rule.
+  assert.equal(shows(false, false, false), 'send');
+  assert.equal(shows(false, true, false), 'send');
+  assert.equal(shows(true, false, false), 'stop', 'a running turn, nothing typed');
+  assert.equal(shows(true, true, false), 'send', 'typed during a turn: it goes into the turn');
+  // In a chat with the mic on.
+  assert.equal(shows(true, true, true), 'stop', 'dictated words made it ready, but Send is held: the turn must still be stoppable');
+  assert.equal(shows(true, false, true), 'stop');
+  assert.equal(shows(false, true, true), 'send', 'no turn to stop: Send, held until the mic is done');
+  assert.equal(shows(false, false, true), 'send');
 });

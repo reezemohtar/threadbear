@@ -396,6 +396,16 @@ export function micHolds(state: MicState): boolean {
   return state !== 'idle';
 }
 
+/**
+ * Which button the message box shows. Stop while a turn is running and
+ * there's nothing to send, as everywhere on the site; and also while Send
+ * is held by the mic, since a held Send can't be pressed and the turn must
+ * still be stoppable. `held` is only ever true in a bot's chat.
+ */
+export function sendOrStop(box: { busy: boolean; ready: boolean; held: boolean }): 'send' | 'stop' {
+  return box.busy && (!box.ready || box.held) ? 'stop' : 'send';
+}
+
 /** An approval's buttons in the order they're shown and tabbed through: the one that allows it last. */
 export function approvalOrder(options: string[]): string[] {
   return [...options].sort((a, b) => Number(a === 'allow') - Number(b === 'allow'));
