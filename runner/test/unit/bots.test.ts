@@ -223,6 +223,7 @@ async function withMain(k: Kit): Promise<string> {
 // ---- off means off
 
 // Everything a runner told its clients and everything it put on disk, with the things that differ run to run made the same.
+const SECRET = /^(runner-token|.*\.key|runner-id)$/;
 function fingerprint(h: Harness, scratch: string) {
   const ids = new Map<string, string>();
   const same = (text: string) => {
@@ -245,28 +246,37 @@ function fingerprint(h: Harness, scratch: string) {
     }
   };
   walk(h.home);
-  return { events, files: files.sort() };
+  // What each file holds, too. Secrets made new for every data folder are named, not compared.
+  const contents: Record<string, string> = {};
+  const raw: string[] = [];
+  const collect = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) (e.isDirectory() ? collect : (f: string) => raw.push(f))(path.join(dir, e.name));
+  };
+  collect(h.home);
+  for (const f of raw.sort()) contents[same(f)] = SECRET.test(path.basename(f)) ? '<made new each time>' : same(fs.readFileSync(f, 'utf8'));
+  return { events, files: files.sort(), contents };
 }
+
+// The same day in a bot's folder: a chat, tasks that finish, fail and are stopped, a wait, a deadline passing, a delete.
+const day = async (k: Kit) => {
+  const main = k.chat(k.juno);
+  k.session(main).init();
+  const a = k.startedBy(main, k.juno, 'Job A');
+  const b = k.startedBy(main, k.juno, 'Job B');
+  const c = k.startedBy(main, k.juno, 'Job C');
+  await k.end(main, 'nothing', 'Waiting.', { waitFor: [a.slice(0, 8)] });
+  await k.end(a, 'nothing', 'A done.');
+  await k.end(b, 'failed');
+  await k.end(c, 'interrupted');
+  await k.end(main, 'you', 'What next?');
+  k.h.clock.advance(3 * 60 * 60_000);
+  k.h.runner.delete(c);
+  await tick();
+  return main;
+};
 
 test('bots: with the experiment off, every event and every file is what a runner with no bots module gives', async () => {
   const scratch = tmpDir();
-  // The same day in a bot's folder: a chat, tasks that finish, fail and are stopped, a wait, a deadline passing, a delete.
-  const day = async (k: Kit) => {
-    const main = k.chat(k.juno);
-    k.session(main).init();
-    const a = k.startedBy(main, k.juno, 'Job A');
-    const b = k.startedBy(main, k.juno, 'Job B');
-    const c = k.startedBy(main, k.juno, 'Job C');
-    await k.end(main, 'nothing', 'Waiting.', { waitFor: [a.slice(0, 8)] });
-    await k.end(a, 'nothing', 'A done.');
-    await k.end(b, 'failed');
-    await k.end(c, 'interrupted');
-    await k.end(main, 'you', 'What next?');
-    k.h.clock.advance(3 * 60 * 60_000);
-    k.h.runner.delete(c);
-    await tick();
-    return main;
-  };
   const off = setup({ on: false, scratch });
   await day(off);
   assert.equal(fs.existsSync(off.file), false, 'no bots.json');
@@ -284,6 +294,30 @@ test('bots: with the experiment off, every event and every file is what a runner
   assert.deepEqual(x.files, y.files, 'the same files on disk');
   assert.equal(x.events, y.events, 'the same events, whole and in order');
   assert.ok(x.events.length > 5000 && x.events.includes('turn.completed'), 'and it is a real day that was compared');
+});
+
+test('bots: as it lands, with nothing about bots in runner.json at all, every event and the contents of every file match a runner with no bots module', async () => {
+  const scratch = tmpDir();
+  const landing = () => {
+    const home = tmpDir();
+    fs.writeFileSync(path.join(home, 'runner.json'), '{}\n');
+    return setup({ home, scratch });
+  };
+  const off = landing();
+  await day(off);
+  const bare = landing();
+  delete bare.h.runner.bots;
+  await day(bare);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(off.home, 'runner.json'), 'utf8')).bots, undefined);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(off.home, 'runner.json'), 'utf8')).experiments, undefined);
+  assert.equal(off.bots.on(), false);
+  const [x, y] = [fingerprint(off.h, scratch), fingerprint(bare.h, scratch)];
+  assert.deepEqual(Object.keys(x.contents).sort(), Object.keys(y.contents).sort(), 'the same files');
+  for (const file of Object.keys(y.contents)) assert.equal(x.contents[file], y.contents[file], file);
+  assert.equal(x.events, y.events);
+  assert.ok(Object.keys(x.contents).length >= 5 && Object.values(x.contents).join('').length > 5000, 'and there was something to compare');
+  assert.equal(fs.existsSync(off.file), false);
+  assert.deepEqual(off.errors, []);
 });
 
 test('bots: started with the experiment off and a broken bots.json on disk, the runner runs threads as usual and leaves the file alone', async () => {
@@ -621,6 +655,50 @@ test("bots: with the experiment off, a Full access thread's create reaches the r
     // Switched on while it runs: from the next call the gate says who made the thread.
     k.configure({ on: true });
     assert.deepEqual((gate.check(agent, 'threads.create', { text: 'x', startedBy: { kind: 'future-kind', label: '' } }) as { startedBy: unknown }).startedBy, { label: 'Agent', kind: 'thread', threadId: agent });
+  }
+});
+
+test('bots: whether bots are on is the switch alone: no folder, list, timer or record is touched, and health does not change it', async () => {
+  const never = (what: string) => () => { throw new Error(`${what} was touched`); };
+  let failing = false;
+  const k = setup({ host: { settingsStamp: never('the settings stamp'), runnerJson: never('the managed list'), real: never('a folder'), thread: never('a thread'), write: (file, data) => (failing ? never('disk')() : fs.writeFileSync(file, data)) } });
+  const timers = k.timers();
+  const before = k.bytes();
+  assert.equal(k.bots.on(), true);
+  k.configure({ on: false });
+  assert.equal(k.bots.on(), false);
+  k.configure({ on: true });
+  assert.equal(k.bots.on(), true);
+  assert.deepEqual([k.timers(), k.bytes()], [timers, before]);
+  // (Those callbacks throwing broke the module at start: it is off for the run, and `on` is still the switch.)
+  assert.match(k.bots.list().off ?? '', /the settings stamp was touched/);
+  assert.equal(k.bots.on(), true);
+  k.bots.stop();
+  assert.equal(k.bots.on(), true);
+  // Not started yet, and a switch that can't be read: true, then false, never a throw.
+  assert.equal(setup({ start: false }).bots.on(), true);
+  assert.equal(setup({ host: { on: never('the switch') } }).bots.on(), false);
+  void failing;
+
+  // The gate, with no bots module at all, with no experiment key in runner.json, and with a module that is broken or stopped.
+  const p = () => ({ text: 'x', startedBy: { kind: 'future-kind', label: '' } });
+  const full = (kit: Kit) => kit.h.runner.create({ text: 'An agent', accountId: 'claude-3', cwd: kit.elsewhere, worktree: false, permissionMode: 'full' }).thread.id;
+  const none = setup();
+  delete none.h.runner.bots;
+  const sent = p();
+  assert.equal(new CallerGate({ runner: none.h.runner }).check(full(none), 'threads.create', sent), sent, 'no module: as sent');
+  const home = tmpDir();
+  fs.writeFileSync(path.join(home, 'runner.json'), '{}');
+  const unsaid = setup({ home });
+  const sent2 = p();
+  assert.equal(new CallerGate({ runner: unsaid.h.runner }).check(full(unsaid), 'threads.create', sent2), sent2, 'no experiments key: off, as sent');
+  for (const how of ['broken', 'stopped'] as const) {
+    const sick = setup({ host: how === 'broken' ? { write: never('disk') } : {} });
+    if (how === 'broken') sick.chat(sick.juno);
+    else sick.bots.stop();
+    if (how === 'broken') assert.equal(sick.errors.length, 1);
+    const agent = full(sick);
+    assert.deepEqual((new CallerGate({ runner: sick.h.runner }).check(agent, 'threads.create', p()) as { startedBy: unknown }).startedBy, { label: 'Agent', kind: 'thread', threadId: agent }, `${how}: who made a thread is still said`);
   }
 });
 

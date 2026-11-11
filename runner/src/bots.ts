@@ -561,10 +561,17 @@ export class Bots {
     });
   }
 
-  /** Whether the experiment is switched on now, for the caller gate (rpc-gate.ts). Reads nothing but runner.json's settings, and can't throw. */
+  /**
+   * Whether the experiment is switched on, for the caller gate (rpc-gate.ts),
+   * which asks on every thread a Full access thread makes. Only that: the
+   * switch as runner.json has it, read as every experiment's is. It doesn't
+   * look at the managed list, resolve a folder, touch a timer or the record,
+   * and says nothing of the module's health: broken, stopped or not yet
+   * started, the answer is still the switch. Can't throw.
+   */
   on(): boolean {
     try {
-      return this.current().on;
+      return this.host.on();
     } catch {
       return false;
     }
