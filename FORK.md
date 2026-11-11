@@ -72,7 +72,8 @@ tested against).
 ### Existing files edited
 
 Every line is added beside an existing line of the same kind; nothing is
-moved or reformatted.
+moved or reformatted. The list is as it stands after the five-lens review's
+fixes (the first commit's one line in `endTurn` is gone).
 
 | File | Lines added | Why |
 |---|---|---|
@@ -80,13 +81,16 @@ moved or reformatted.
 | `runner/src/runner.ts` | `bots?: Bots;` in `RunnerDeps`, after `projects?: Projects;` | Handed in like `projects` |
 | `runner/src/runner.ts` | `bots?: Bots;` in the class, after `projects?: Projects;` | The field |
 | `runner/src/runner.ts` | `this.bots = deps.bots;` in the constructor, after `this.projects = deps.projects;` | Kept |
-| `runner/src/runner.ts` | `this.bots?.turnEnded(rec.id, outcome ?? (status === 'error' ? 'failed' : 'interrupted'));` in `endTurn`, after `this.markDirty(st);` | Every turn ends here, however it ended: the one place to write a task's report |
+| `runner/src/runner.ts` | In `completeTurn`, after the `markFinished` line: `this.bots?.turnEnded({ threadId: rec.id, turnId: turn.turnId, outcome, needsYou: said?.needs === 'you' \|\| rec.status === 'waiting', finished: finished && !review && !rec.labReviewOwed, reply: turn.lastText });` | Told after the turn's own bookkeeping and its waits, with a fixed account of how it ended |
+| `runner/src/runner.ts` | In `failTurn`, after `this.endTurn(...)`: `this.bots?.turnEnded({ threadId: rec.id, turnId: turn.turnId, outcome: interrupted ? 'interrupted' : 'failed', needsYou: false, finished: false, reply: turn.lastText });` | The same, for a turn that was stopped or failed |
 | `runner/src/runner.ts` | `this.bots?.deleted(threadId);` in `delete`, after `this.waitedOnDeleted(threadId);` | A deleted thread leaves the record |
 | `runner/src/runner/new-threads.ts` | `this.bots?.created(st.rec);` in `create`, after `makeThread` | A new thread is classed as the main chat, a task or neither |
 | `runner/src/main.ts` | `import { Bots, runnerHost } from './bots.ts';` after the `Projects` import | Built here |
 | `runner/src/main.ts` | `bots: new Bots(runnerHost(() => runner, cfg.home, realClock, log)),` in `new Runner({...})`, after `projects,` | Built and handed in |
 | `runner/src/main.ts` | `runner.bots?.start();` after `runner.start({ skip: kept });` | Deadline timers are set again from the file |
-| `runner/src/rpc.ts` | `case 'bots.list': return r.bots?.list() ?? { on: false, managed: [], bots: [] };` (two lines) after `pools.list` | The read-only look at the record |
+| `runner/src/main.ts` | `runner.bots?.stop();` twice: in `shutdown` after `scheduler.stop();`, and in `handOver` after `scheduler.stop();` | A runner that is stopping or has handed over writes nothing more and holds no timer |
+| `runner/src/rpc.ts` | `case 'bots.list': return r.bots?.list() ?? { on: false, managed: [], refused: [], bots: [] };` (two lines) after `pools.list` | The read-only look at the record |
+| `runner/src/rpc-gate.ts` | In `CallerGate.check`, just before the line that passes a Full access thread: a two-line comment, `if (method.startsWith('bots.')) throw ...notAllowed`, and one line that returns `threads.create`'s params with `startedBy.threadId` set to the calling thread for a Full access key | The record is closed to every thread's key, and no thread can make one that passes as the owner's chat or as another thread's task. **This line acts with the experiment off too**: a Full access thread's `threads.create` now always carries its own id in `startedBy` (the threadbear tools and `tb` already sent it) |
 | `web/src/bots.test.ts` | Two imports and one test | The website's copy of the folder rule is tested against the shared cases |
 | `docs/protocol.md`, `docs/on-your-mac.md`, `docs/experiments.md` (generated) | The Bots section and method row; the new file; the experiment's text | Repo rules |
 

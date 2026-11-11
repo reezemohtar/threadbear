@@ -2377,6 +2377,7 @@ export class Runner {
     if (review) this.waitOnReview(st, review);
     // Owed to the next runner (a handover): finished once it's reviewed.
     else if (finished && !rec.labReviewOwed) this.markFinished(st, turn.lastText);
+    this.bots?.turnEnded({ threadId: rec.id, turnId: turn.turnId, outcome, needsYou: said?.needs === 'you' || rec.status === 'waiting', finished: finished && !review && !rec.labReviewOwed, reply: turn.lastText });
     if (outcome === 'completed' && this.waitedOnFor(rec.id).length) this.tellActivity({ kind: 'waited-on', threadId: rec.id });
     // A schedule's message brought this thread out of the archive (sendTo).
     // A run that finishes with nothing for Mike puts it back, so a watcher he
@@ -2470,7 +2471,6 @@ export class Runner {
     rec.status = rt.approvals.size ? 'waiting' : status;
     rec.lastActivityAt = this.isoNow();
     this.markDirty(st);
-    this.bots?.turnEnded(rec.id, outcome ?? (status === 'error' ? 'failed' : 'interrupted'));
     const waiters = rt.turnEndWaiters ?? [];
     rt.turnEndWaiters = undefined;
     for (const w of waiters) w();
@@ -2500,6 +2500,7 @@ export class Runner {
     if (!interrupted) body.error = message;
     const ev = this.emit(st, body, turn.turnId);
     this.endTurn(st, ev.seq, interrupted ? 'idle' : 'error');
+    this.bots?.turnEnded({ threadId: rec.id, turnId: turn.turnId, outcome: interrupted ? 'interrupted' : 'failed', needsYou: false, finished: false, reply: turn.lastText });
   }
 
   afterTurn(st: ThreadState, limitHit?: string, netLost?: string): void {

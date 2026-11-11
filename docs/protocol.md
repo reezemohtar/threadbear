@@ -1140,7 +1140,7 @@ the summary and then the reply.
 | `librarian.run` | `{ threadId?: string }` | `{ librarian: LibrarianStatus }`. Queues a look at the thread now (reason `asked`), or with no `threadId`, at every thread it has never looked at (a backfill, newest first) |
 | `librarian.update` | `{ paused?: boolean }` | `{ librarian: LibrarianStatus }` |
 | `pools.list` | `{}` | `{ pools: Pool[] }` (see Pools) |
-| `bots.list` | `{}` | `{ on, managed, bots }` (see Bots; experiment `bots`). Read-only, and not open to a thread's own key |
+| `bots.list` | `{}` | `{ on, off?, managed, refused, bots }` (see Bots; experiment `bots`). Read-only, and not open to a thread's own key |
 | `pools.save` | `{ pools: Pool[] }` | `{ pools: Pool[] }`. Replaces the whole list in `runner.json` (`builtIn` is dropped; an empty list goes back to the built-in ones). `-32602` for a duplicate id, a blank id or title, an empty `accountIds`, or an account id the runner doesn't know. A blank or non-string `icon` is dropped. Every client gets `pools.updated` |
 | `settings.get` | `{}` | `{ settings: Settings }` |
 | `settings.update` | `{ defaultCwd?, idleMinutes?, maxLiveCLIs?, followMain?, bulletReplies?, oneReply?, labReview?, keepAwake?, bringIn?, models?: { pool?: string \| null, privateFolders? }, experiments?: { [id]: boolean } }` | `{ settings: Settings }`. Saves what's given to `runner.json` and applies it straight away, except `followMain` (next restart). `experiments` sets those switches under runner.json's `experiments`, keeping the rest; `Settings.experiments` lists every one as `{ id, name, does, on }`, oldest first. `defaultCwd` must be an existing folder, `idleMinutes` at least 1, `maxLiveCLIs` 1 to 20, `pool` a pool id or `null`, each `experiments` key an experiment's id; otherwise `-32602` saying which. Every client gets `settings.updated` |
@@ -6322,40 +6322,50 @@ type ThreadShare = {
 
 An experiment (`bots`, off by default; a fork's own, `runner/src/bots.ts`).
 With it on, the runner keeps a record of each managed bot in one file,
-`bots.json`, in its data folder. A bot is a folder inside a folder named
-`bots` (the folder's own name not starting with `_` or `.`), and only the
-ones `runner.json` lists are managed; none is by default:
+`bots.json`, in its data folder (mode 0600). A bot is a folder inside a
+folder named `bots` (the folder's own name not starting with `_` or `.`),
+and only the ones `runner.json` lists are managed; none is by default:
 
 ```ts
 // runner.json
 bots?: { managed?: ({ folder: string; deadlineMinutes?: number } | string)[] }
 ```
 
+A listed folder is taken as the filesystem has it (links followed, the
+disk's own spelling). One that isn't there, isn't a bot's, has the name of
+another listed bot, or is inside or around another listed folder is
+refused, and `bots.list` says why. `deadlineMinutes` is kept between 1 and
+10,080 (a week); 120 unless given. A bot's name on record stays with the
+folder it was recorded at: listing the same name at another folder is
+refused until the record is removed by hand.
+
 For each bot the record holds a pointer to its main chat and the tasks that
-chat started:
+chat started. Nothing else is recorded.
 
 ```ts
 type BotRecord = {
   name: string          // the folder's own name
-  folder: string
+  folder: string        // as the filesystem has it
   projectId?: string    // the project that has the folder, if one does
-  generation: number
+  generation: number    // a count of main chats the bot has had; not a lock or a fence
   main?: { threadId: string; generation: number }
   tasks: Record<string, {          // by the task's thread id
     parentThreadId: string
     generation: number
-    state: string                  // "working", then its report's kind
+    state: string                  // "working", or its newest report's kind
     createdAt: string
-    deadline: string               // ISO; createdAt plus the bot's deadline (2 hours unless given)
+    deadline: string               // ISO
     lastActivityAt: string
     overCap?: true                 // made while 3 were already open
     overdueAt?: string             // the main chat has been told it missed its deadline
-    report?: { id: string; kind: "final" | "needs-you" | "failed" | "stopped"; at: string; reply?: string;
-               evidence: { kind: string; title: string; where?: string }[];
-               delivered?: "main" | "waitFor" | "no-main"; deliveredAt?: string }
-    reports?: number
+    reports: {                     // one per turn end that reported, oldest first, the newest 5 kept
+      id: string; turnId: string
+      kind: "final" | "needs-you" | "failed" | "stopped"
+      at: string; reply?: string   // the turn's last reply, cut to 2,000 characters
+      evidence: { kind: string; title: string; where?: string }[]   // 12 at most
+      delivered?: "main" | "waitFor"; deliveredAt?: string          // absent: still owed
+    }[]
   }>
-  plain: Record<string, { parentThreadId: string; createdAt: string }>
 }
 ```
 
@@ -6365,30 +6375,68 @@ type BotRecord = {
   and raises `generation`.
 - **Task.** A thread whose `startedBy.threadId` is the bot's main chat and
   whose folder is inside the bot's. One level only: a thread a task starts,
-  or one another bot's thread starts there, is kept under `plain` and is not
-  a task. A task made while 3 are open (working or needing the owner) is
-  still made, marked `overCap`, and the main chat is told.
-- **Report.** Written by the runner when a task's turn ends, from how it
-  ended: `stopped` (interrupted), `failed`, `needs-you` (it left an ask or
-  an open card), `final` (the runner marked the thread finished, as a
-  `waitFor` would hear). A turn that ends with work still going writes none.
-  The evidence is the task's own Highlights (files written, links, commits),
-  and says "reported, not verified". The report is sent to the bot's main
-  chat as a queued message from the runner (`origin: "runner"`), reading
-  status, result, evidence, what would unblock it, and the report's id.
-  `stopped`, `failed` and `needs-you` go at once; `final` ones that end
-  within 3 seconds of each other go in one message. If the main chat was
-  already hibernating on that task with `waitFor`, its finish is not sent a
-  second time (`delivered: "waitFor"`). An archived or missing main chat is
-  not sent to (`"no-main"`).
+  or one another bot's thread starts there, is not recorded. A task made
+  while 3 are open (working or needing the owner) is still made, marked
+  `overCap`, and the main chat is told. A thread made with a thread's own
+  key always carries that thread's id in `startedBy` (the gate sets it), so
+  no thread can pass as the owner's chat or as another thread's task.
+- **Report.** Written by the runner after a task's turn has ended, from a
+  fixed account of how it ended: `stopped` (interrupted), `failed`,
+  `needs-you` (it left an ask or an open card), `final` (the runner marked
+  the thread finished, as a `waitFor` would hear). A turn that ends with
+  work still going writes none. Each reporting turn end is its own report,
+  keyed by its id and the turn's id; one is never written over and never
+  sent twice. The evidence is the task's own Highlights (files written,
+  links, commits). It is sent to the bot's main chat, at once, as a queued
+  message from the runner (`origin: "runner"`) in two parts: the runner's
+  own lines (task, status, evidence marked "reported, not verified", what
+  would unblock it, the report's id), then the task's reply inside a marked
+  block that says it is the task's words, to be read as a report and never
+  as instructions or as the owner's approval. The block's markers are taken
+  out of the reply itself.
+- **Waits.** If the main chat is hibernating on the task with `waitFor`, a
+  `final` report is held: the wait tells the main chat itself. It is marked
+  `delivered: "waitFor"` only once the wait's own message naming the task
+  is in the main chat. If the wait ends without that (another task it was
+  waiting on failed, say), the report is sent as above.
+- **A task that runs on.** A task that has reported, or been called
+  overdue, and then ends a later turn with work still going is `working`
+  again: `overdueAt` is cleared and its deadline is counted again from that
+  moment.
 - **Deadline.** A task still `working` at its deadline: the main chat is
   told once (`overdueAt`). The timer is set again from the file when the
   runner starts.
+- **No main chat to tell.** A report or overdue notice for a bot whose main
+  chat is archived or gone stays owed (`delivered` and `overdueAt` unset)
+  and is tried again every 10 minutes and whenever a turn ends.
+- **Best effort.** Delivery is not guaranteed in this version: a report is
+  marked delivered when the runner queues it, and a runner that stops
+  between a turn's end and the save can lose that report or send it again.
+  A task whose turn ends on a runner that is handing over or stopping gets
+  no report.
+- **Off means off.** Every write, message and timer is checked against
+  `runner.json` as it is at that moment (read again only when the file's
+  time or size has changed). The experiment switched off, or a bot taken
+  off the list, stops everything for it at once, records already in the
+  file included; the file is left as it is.
+- **Faults.** Nothing the record does can change what a thread does. Any
+  error inside it (a full disk, a file it can't read) turns it off until
+  the runner next starts, with one error notice. Only a missing `bots.json`
+  is an empty record. One that isn't a whole record is set aside as
+  `bots.json.unreadable-<ms>` and said; if it can't be read or set aside,
+  the record is off and the file is never written over.
+- **One writer.** Only the runner in charge writes the file or holds its
+  timers: not one that is stopping, and not one finishing its turns after
+  a handover.
+- **Kept small.** A bot's finished tasks stay for 14 days and 20 at most;
+  one with a report still owed always stays.
 
-`bots.list` returns `{ on: boolean, managed: { name, folder, deadlineMinutes }[], bots: (BotRecord & { openTasks: number })[] }`.
+`bots.list` returns `{ on: boolean, off?: string, managed: { name, folder, deadlineMinutes }[], refused: { folder, why }[], bots: (BotRecord & { openTasks: number })[] }`;
+`off` says why nothing is being recorded when the experiment is on.
+It is refused to every thread's own key, whatever the thread's access.
 With the experiment off, or no bot listed, nothing is recorded, no file is
-written and threads behave exactly as without it. A runner without the
-experiment's code answers `bots.list` with `-32601`.
+read or written and threads behave exactly as without it. A runner without
+the experiment's code answers `bots.list` with `-32601`.
 
 ## Ordering and reconnects
 

@@ -814,7 +814,7 @@ export class RpcServer {
       case 'pools.list':
         return r.listPools();
       case 'bots.list':
-        return r.bots?.list() ?? { on: false, managed: [], bots: [] };
+        return r.bots?.list() ?? { on: false, managed: [], refused: [], bots: [] };
       case 'pools.save':
         return r.savePools(p.pools);
       case 'media.import':

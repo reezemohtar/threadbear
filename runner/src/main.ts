@@ -1043,6 +1043,7 @@ async function main(): Promise<void> {
     peers.close();
     primaryLink?.close();
     scheduler.stop();
+    runner.bots?.stop();
     // A check under way keeps what it prints for the next runner, but only
     // if this one is still here when it ends.
     // launch.mjs gives a runner 20 s after its own SIGTERM (STOP_GRACE_MS);
@@ -1096,6 +1097,7 @@ async function main(): Promise<void> {
       upstream.stop();
       stopHousekeeping();
       scheduler.stop();
+      runner.bots?.stop();
       librarian.stop();
       // stuckJobs goes on: background work can hold a thread here for hours,
       // and a wait that can never end should still be noticed. It only looks
