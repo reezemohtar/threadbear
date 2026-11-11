@@ -54,6 +54,18 @@ const params = new URLSearchParams(location.search);
 const SLOW = Number(params.get('slow')) || 0;
 const FAIL = Number(params.get('fail')) || 0;
 const FAILWATCH = params.has('failwatch');
+// ?mic=1 pretends the browser can dictate on the device, so the mic button
+// can be looked at where the real browser (a headless one, say) can't.
+if (params.has('mic')) {
+  (window as unknown as { SpeechRecognition: unknown }).SpeechRecognition = class {
+    static async available() {
+      return 'available';
+    }
+    start() {}
+    stop() {}
+    abort() {}
+  };
+}
 // Read by the dev server (vite.config.ts), and cleared by any load without the flag.
 document.cookie = `mockfailpage=${params.has('failpage') ? 1 : 0}; path=/`;
 // Watched keys that have been let go of at least once since first asked.

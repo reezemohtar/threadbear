@@ -30,10 +30,24 @@ Off by default. No backend, runner or Mac app code changed.
 | `web/src/bots-loader.ts`, `web/src/bots-loader.test.ts` | Reads each project's folders a few at a time, and its tests |
 | `web/src/bots-page.tsx`, `web/src/bots.css` | The page and its look |
 | `web/src/bots-lazy.tsx` | Fetches the page only when it's opened, with a Reload if that fetch fails |
+| `web/src/bots-mic.tsx` | The mic in a bot's message box: on-device dictation, drawn only where the browser can do it |
 | `web/src/bots-avatar.tsx` | The 12 avatar shapes (our own drawings) and the rail icon |
 | `web/mock/` | The site on made-up data with no backend, for looking at a page (dev server only) |
 | `runner/src/experiments/bots.md` | The experiment's file. Its `reminder` is a placeholder: no check-in schedule is booked |
 | `FORK.md` | This file |
+
+## Bots page, style pass (branch `reeze/bots-style`, 11 Nov 2026)
+
+The look brought to the Bots design's reference: bubbles, cards in the
+conversation, the pill message box with a mic, the tabbed pane, search and
+folding sections. Web only, still the `bots` experiment, off by default.
+
+### Existing files edited
+
+| File | Change | Why |
+|---|---|---|
+| `web/src/App.tsx` | `ThreadView`, `Dock` and `ApprovalCard` take an optional `chat` (type `ChatLook`), passed only by the Bots page. With it: the dock's card is drawn through a portal into a slot in the conversation, a line is drawn for each new day, the message box says "Message <name>" and can hold a tool beside Send, and an approval gets a label and a Details fold. Two imports. | The reference shows cards in the conversation and a mic in the message box. The card, its state and what it sends are the same code either way; without `chat` nothing changes |
+| `docs/website.md`, `docs/experiments.md` | The Bots section and the experiment's text | Repo rule: docs stay true |
 
 ## Fixes to Mike's code, until his release has them
 

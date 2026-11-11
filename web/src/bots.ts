@@ -305,6 +305,101 @@ export function buildBots(projects: BotProject[], threads: BotThread[]): BotList
 
 export const allBots = (lists: BotLists): Bot[] => [...lists.pinned, ...lists.business, ...lists.personal];
 
+// ------------------------------------------------------------ the list's own controls
+
+/** The bots whose name, role or latest line has these words. */
+export function matchBots(lists: BotLists, query: string): BotLists {
+  const q = query.trim().toLowerCase();
+  if (!q) return lists;
+  const has = (b: Bot) => [b.title, b.role, b.line].some((x) => x.toLowerCase().includes(q));
+  return { pinned: lists.pinned.filter(has), business: lists.business.filter(has), personal: lists.personal.filter(has) };
+}
+
+// Which sections are folded, kept in this browser ('["personal"]').
+export const BOTS_FOLDED_KEY = 'threadbear.botsFolded';
+
+export function readFoldedBots(saved: string | null): Set<Section> {
+  try {
+    const list: unknown = JSON.parse(saved ?? '[]');
+    return new Set(Array.isArray(list) ? list.filter((x): x is Section => x === 'business' || x === 'personal') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function toggleFolded(folded: Set<Section>, section: Section): Set<Section> {
+  const next = new Set(folded);
+  if (!next.delete(section)) next.add(section);
+  return next;
+}
+
+// ------------------------------------------------------------ the library
+
+// What the website is given of a chat's files today: its pictures
+// (phone:images), each with whether it was pinned. Pages, files and links
+// stay on the Mac, so the Library has no chips for them.
+export type LibraryPicture = { seq: number; url: string; pinned?: boolean; src?: string };
+export type LibraryChip = 'pinned' | 'media';
+
+/** A chat's pictures for the Library, newest first, each once. */
+export function libraryOf(images: LibraryPicture[]): Record<LibraryChip, LibraryPicture[]> {
+  const seen = new Set<string>();
+  const media = [...images]
+    .sort((a, b) => b.seq - a.seq)
+    .filter((p) => {
+      if (!p.url || seen.has(p.url)) return false;
+      seen.add(p.url);
+      return true;
+    });
+  return { pinned: media.filter((p) => p.pinned), media };
+}
+
+/** The chips to show: only the ones with something real behind them. */
+export function libraryChips(library: Record<LibraryChip, LibraryPicture[]>): LibraryChip[] {
+  return (['pinned', 'media'] as const).filter((chip) => library[chip].length > 0);
+}
+
+// ------------------------------------------------------------ the chat's date lines
+
+/**
+ * The centred line above a message when it's the first shown, or the first
+ * of a new day: "Today 8:39 AM", "Yesterday 8:39 AM", "Mon 3 Nov, 8:39 AM".
+ * Undefined when the message before it was on the same day.
+ */
+export function dayLine(at: string, before: string | undefined, now: number): string | undefined {
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const mine = Date.parse(at);
+  if (!Number.isFinite(mine)) return undefined;
+  if (before !== undefined && Number.isFinite(Date.parse(before)) && day(Date.parse(before)) === day(mine)) return undefined;
+  const time = new Date(mine).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const days = Math.round((day(now) - day(mine)) / 86_400_000);
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Yesterday ${time}`;
+  return `${new Date(mine).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
+}
+
+// ------------------------------------------------------------ dictation
+
+/**
+ * Whether this browser can turn speech into text on the device itself,
+ * given its SpeechRecognition constructor (undefined where there is none).
+ * Only then is the mic shown: a browser that can only do it by sending the
+ * audio to a server doesn't count, as nothing said to a bot should leave
+ * the machine that way.
+ */
+export async function canDictateHere(Recognition: unknown, lang: string): Promise<boolean> {
+  const available = (Recognition as { available?: (options: { langs: string[]; processLocally: boolean }) => Promise<string> } | undefined)?.available;
+  if (typeof available !== 'function') return false;
+  try {
+    return (await available.call(Recognition, { langs: [lang], processLocally: true })) === 'available';
+  } catch {
+    return false;
+  }
+}
+
 // ------------------------------------------------------------ the address
 
 // "/bots/<projectId>" is a bot's newest chat, "/bots/<projectId>~<threadId>"

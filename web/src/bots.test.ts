@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, isLoadFailure, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -287,4 +287,71 @@ test("the page's code failing to arrive is told apart from a fault in the page",
   assert.equal(isLoadFailure(new TypeError('error loading dynamically imported module: http://x/assets/bots-page.js')), true);
   assert.equal(isLoadFailure('a string'), false);
   assert.equal(isLoadFailure(null), false);
+});
+
+test('the search keeps the bots whose name, role or latest line has the words', () => {
+  const lists = buildBots(
+    [project('juno', { title: 'Juno · Router', goals: 'Routes work between bots' }), project('wren', { title: 'Wren · Replies', goals: 'Writes reply drafts' }), project('fern', { title: 'Fern', goals: 'Section: Personal\nKeeps the training plan' }), project('pico', { title: 'Pico' })],
+    [thread({ projects: [{ id: 'pico' }], starredAt: '2026-11-01T00:00:00Z', preview: 'Three venues fit' })],
+  );
+  assert.equal(matchBots(lists, '  '), lists, 'nothing typed: the same lists');
+  assert.deepEqual(titles(matchBots(lists, 'ROUT').business), ['Juno · Router'], 'by name, any case');
+  assert.deepEqual(titles(matchBots(lists, 'drafts').business), ['Wren · Replies'], 'by role');
+  assert.deepEqual(titles(matchBots(lists, 'venues').pinned), ['Pico'], 'by latest line, pinned ones too');
+  assert.deepEqual(titles(matchBots(lists, 'training').personal), ['Fern']);
+  assert.equal(allBots(matchBots(lists, 'zzz')).length, 0);
+});
+
+test('folded sections are remembered, and junk in the saved value is ignored', () => {
+  assert.deepEqual([...readFoldedBots(null)], []);
+  assert.deepEqual([...readFoldedBots('["personal","hidden",3]')], ['personal']);
+  assert.deepEqual([...readFoldedBots('not json')], []);
+  assert.deepEqual([...readFoldedBots('{"personal":true}')], []);
+  const once = toggleFolded(new Set(), 'business');
+  assert.deepEqual([...once], ['business']);
+  assert.deepEqual([...toggleFolded(once, 'business')], []);
+  assert.deepEqual([...readFoldedBots(JSON.stringify([...toggleFolded(once, 'personal')]))].sort(), ['business', 'personal']);
+});
+
+test('the library holds only what the website is really given: pictures, and which are pinned', () => {
+  const none = libraryOf([]);
+  assert.deepEqual(libraryChips(none), [], 'no pictures: no chips at all');
+  const lib = libraryOf([
+    { seq: 3, url: 'https://example.invalid/a.png' },
+    { seq: 9, url: 'https://example.invalid/b.png', pinned: true },
+    { seq: 5, url: 'https://example.invalid/a.png' },
+    { seq: 7, url: '' },
+  ]);
+  assert.deepEqual(lib.media.map((p) => p.seq), [9, 5], 'newest first, each picture once, none without an address');
+  assert.deepEqual(lib.pinned.map((p) => p.seq), [9]);
+  assert.deepEqual(libraryChips(lib), ['pinned', 'media']);
+  assert.deepEqual(libraryChips(libraryOf([{ seq: 1, url: 'https://example.invalid/c.png' }])), ['media'], 'nothing pinned: no Pinned chip');
+});
+
+test('a date line goes above the first message and the first of each new day', () => {
+  const at = (y: number, m: number, d: number, h: number) => new Date(y, m - 1, d, h, 30).toISOString();
+  const now = new Date(2026, 10, 11, 15, 0).getTime();
+  assert.match(dayLine(at(2026, 11, 11, 8), undefined, now)!, /^Today /);
+  assert.equal(dayLine(at(2026, 11, 11, 9), at(2026, 11, 11, 8), now), undefined, 'same day: no line');
+  assert.match(dayLine(at(2026, 11, 10, 23), undefined, now)!, /^Yesterday /);
+  assert.match(dayLine(at(2026, 11, 11, 0), at(2026, 11, 10, 23), now)!, /^Today /, 'past midnight: a new line');
+  const older = dayLine(at(2026, 11, 3, 8), undefined, now)!;
+  assert.ok(!/^Today|^Yesterday/.test(older) && /3/.test(older), older);
+  assert.equal(dayLine('not a date', undefined, now), undefined);
+});
+
+test('the mic is offered only where speech can be turned to text on the device', async () => {
+  assert.equal(await canDictateHere(undefined, 'en-US'), false, 'no speech recognition at all');
+  assert.equal(await canDictateHere(class {}, 'en-US'), false, 'a browser that can only send audio to a server');
+  const asked: unknown[] = [];
+  const local = class {
+    static async available(options: unknown) {
+      asked.push(options);
+      return 'available';
+    }
+  };
+  assert.equal(await canDictateHere(local, 'en-US'), true);
+  assert.deepEqual(asked, [{ langs: ['en-US'], processLocally: true }], 'it asks for on-device only');
+  assert.equal(await canDictateHere(class { static async available() { return 'downloadable'; } }, 'en-US'), false, 'not without a download nobody asked for');
+  assert.equal(await canDictateHere(class { static async available() { throw new Error('no'); } }, 'en-US'), false);
 });

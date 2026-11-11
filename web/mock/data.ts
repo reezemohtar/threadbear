@@ -49,8 +49,7 @@ const threads: Thread[] = [
     starredAt: iso(NOW - 9 * 24 * 60 * MIN),
     needsYou: true,
     needs: 'you',
-    asksSeq: 4,
-    asks: [{ action: 'Clear the 7 safe review copies?', why: 'About 6.8 GB. Nothing is using them and everything in them is saved elsewhere.', options: ['Yes, clear the 7 safe ones', 'Not now'], suggested: 0 }],
+    pendingApproval: { approvalId: 'mock-approval', kind: 'approval', name: 'Bash', title: 'Allow Juno to clear the 7 safe review copies?', options: ['allow', 'deny'], inputSummary: 'rm -r ~/made-up/review-copies/{1..7}\n# about 6.8 GB, nothing is using them' },
   }),
   thread('juno-0008', 'Monday plan', 'The week is laid out in the plan page.', 26 * 60),
   thread('pico-0027', 'Venue shortlist', 'Three venues fit the dates.', 1, { starredAt: iso(NOW - 5 * 24 * 60 * MIN), status: 'running', working: 'Comparing the three venues' }),
@@ -82,10 +81,15 @@ for (let i = 0; i < STRESS; i++) {
 
 const archived: Thread[] = [thread('juno-0008', 'Bot roster', 'All ten bots listed.', 9 * 24 * 60, { view: 'den', archivedAt: iso(NOW - 8 * 24 * 60 * MIN) })];
 
-type Message = { seq: number; role: 'user' | 'assistant'; text: string; at: string };
-const say = (lines: [Message['role'], string][]): Message[] => lines.map(([role, text], i) => ({ seq: i + 1, role, text, at: iso(NOW - (lines.length - i) * 2 * MIN) }));
+type Message = { seq: number; role: 'user' | 'assistant'; text: string; origin?: string; at: string };
+// A third item marks who else sent it ('agent': another thread's agent).
+const say = (lines: [Message['role'], string, string?][]): Message[] => lines.map(([role, text, origin], i) => ({ seq: i + 1, role, text, ...(origin ? { origin } : {}), at: iso(NOW - (lines.length - i) * 2 * MIN) }));
 const chats: Record<string, Message[]> = {
   'thread-1': say([
+    ['user', 'Morning. Anything waiting on me from the other bots?'],
+    ['assistant', 'Two things. Wren has four client replies drafted and wants a yes on two of them. Tally finished the October close and found nothing odd.'],
+    ['user', 'Good. Separate question: my disk is nearly full again. Can you find out what is taking the room, and whether any of it is safe to clear? I do not want anything removed that a running job still needs.'],
+    ['assistant', 'Looking now. The biggest items are old review copies of three projects, about 9 GB in all.'],
     ['user', 'Is it safe to clear those old review copies?'],
     ['assistant', "Most likely yes, but I haven't checked it myself yet. I'm asking Pico to confirm nothing is using them before anything is removed."],
     ['user', 'OK. Tell me what it finds.'],
@@ -94,6 +98,8 @@ const chats: Record<string, Message[]> = {
   'thread-4': say([
     ['user', "What's waiting in the client inbox?"],
     ['assistant', 'Four replies are drafted and none are sent. Two are quick confirmations, one needs a date from you, and one is a pricing question.'],
+    ['user', 'Thursday is free on the made-up calendar.', 'agent'],
+    ['assistant', 'Noted, thank you.'],
     ['user', 'Use Thursday for the date.'],
     ['assistant', 'Thursday is open, so I used that date in the third draft.\n\n| Draft | Kind | State |\n|---|---|---|\n| 1 | Confirmation | Ready |\n| 2 | Confirmation | Ready |\n| 3 | Date | Ready |\n| 4 | Pricing | Needs you |'],
   ]),
@@ -105,8 +111,20 @@ const chatOf = (threadId: string): Message[] => {
   return say([['user', 'How is it going?'], ['assistant', String(t?.preview ?? 'All quiet.')]]);
 };
 
+// Made-up pictures for the Library: plain coloured squares, drawn here.
+const square = (colour: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="10" fill="${colour}"/></svg>`)}`;
+const pictures: Record<string, { seq: number; url: string; pinned?: boolean }[]> = {
+  'thread-1': [
+    { seq: 2, url: square('#1680f3') },
+    { seq: 4, url: square('#10ab61'), pinned: true },
+    { seq: 6, url: square('#ee620d') },
+  ],
+};
+
 export function answer(name: string, args: Record<string, unknown>): unknown {
   switch (name) {
+    case 'phone:images':
+      return pictures[String(args.threadId)] ?? [];
     case 'phone:me':
       return { name: 'web-mock', expiresAt: iso(NOW + 24 * 60 * MIN), apiVersion: 0 };
     case 'phone:runners':

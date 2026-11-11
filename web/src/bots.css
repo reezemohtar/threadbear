@@ -20,6 +20,9 @@
   --b-fill2: light-dark(rgba(28, 28, 28, 0.06), rgba(245, 245, 245, 0.04));
   --b-botb: light-dark(rgba(28, 28, 28, 0.06), rgba(245, 245, 245, 0.04));
   --b-info: light-dark(#0b6dd3, #4d9bff);
+  --b-accent: light-dark(#1680f3, #116dd2);
+  --b-chrome: light-dark(#fcfcfc, #121212);
+  --b-danger-tint: light-dark(rgba(251, 43, 62, 0.09), rgba(252, 44, 62, 0.07));
   --b-warn: light-dark(#da830e, #c8770c);
   --b-warn-text: light-dark(#aa6300, #e28600);
   --b-ok: light-dark(#10ab61, #0e9f5a);
@@ -159,9 +162,105 @@
   .bots.has-bot .bots-list { display: none; }
   .bots:not(.has-bot) .bots-main { display: none; }
   .bots-main .messages { padding-top: 8px; }
-  .bots-main .msg.user .md { max-width: 85%; }
   .bots-island { max-width: calc(100% - 190px); }
 }
 
 .bots-note .linkish { font-size: inherit; }
 .bots-blank .bots-note { max-width: 320px; text-align: center; }
+
+/* ================================================================
+   The style pass (11 Nov): sizes, spacing and colours brought to the Bots
+   design's reference. Everything is still under .bots-shell.
+   ================================================================ */
+
+/* ---- the list's top: round buttons, and the search that takes the title's place */
+.bots-bar { gap: 8px; padding: 0 12px 0 16px; justify-content: flex-end; }
+.bots-bar h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.bots-round { flex: none; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--b-elev); color: var(--b-t2); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); }
+.bots-round:hover, .bots-round.on { color: var(--b-t1); }
+.bots-round:focus-visible, .bots-tab:focus-visible, .bots-chip:focus-visible, .bots-head:focus-visible, .bots-mic:focus-visible { outline: 2px solid var(--b-info); outline-offset: 1px; }
+.bots-round svg { width: 16px; height: 16px; }
+.bots-search { flex: 1; min-width: 0; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 99px; background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); color: var(--b-t3); }
+.bots-search svg { flex: none; width: 14px; height: 14px; }
+.bots-search input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none; font: inherit; color: var(--b-t1); }
+.bots-search input::placeholder { color: var(--b-t4); }
+
+/* ---- section headers: the count gives way to a chevron under the pointer, and a click folds */
+.bots-head { width: 100%; border: 0; background: none; text-align: left; font-size: 13px; line-height: 18px; padding: 6px 8px; }
+.bots-head:hover { background: var(--b-hover); }
+.bots-head + .bots-head, .bots-rows + .bots-head { margin-top: 8px; }
+.bots-head b { min-width: 16px; text-align: right; }
+.bots-head svg { display: none; flex: none; width: 16px; height: 12px; margin-left: auto; color: var(--b-t3); transition: transform 0.15s; }
+.bots-head:hover b, .bots-head:focus-visible b { display: none; }
+.bots-head:hover svg, .bots-head:focus-visible svg { display: block; }
+.bots-head.folded svg { transform: rotate(-90deg); }
+
+/* ---- rows: unread is a dot, as the reference has it */
+.bot-unread { flex: none; width: 8px; height: 8px; margin: 0 4px; border-radius: 50%; background: var(--b-accent); }
+.bot-tile { padding: 6px 8px 4px; }
+
+/* ---- the chat column: 960 wide at most */
+.bots-main .messages > *, .bots-main .dock > *, .bots-nochat .dock > * { max-width: 960px; }
+.bots-main .messages { padding-left: 16px; padding-right: 16px; }
+/* Bubbles: 18 round, 6 where two from the same side meet, 2 apart. */
+.bots-main .msg.assistant > .md { max-width: min(80%, 560px); }
+.bots-main .msg.assistant + .msg.assistant, .bots-main .msg.user + .msg.user { margin-top: -10px; }
+.bots-main .msg.assistant:has(+ .msg.assistant) > .md { border-bottom-left-radius: 6px; }
+.bots-main .msg.assistant + .msg.assistant > .md { border-top-left-radius: 6px; }
+.bots-main .msg.user:has(+ .msg.user) .md { border-bottom-right-radius: 6px; }
+.bots-main .msg.user + .msg.user .md { border-top-right-radius: 6px; }
+/* The last paragraph ends the bubble: a one-line bubble is 36 high. */
+.bots-main .md > :last-child { margin-bottom: 0; }
+/* The centred small lines: a new day, and who a message came from. */
+.bots-main .day-line { min-height: 24px; font-size: 12px; line-height: 24px; text-align: center; color: var(--b-t3); }
+.bots-main .msg .origin { align-self: center; min-height: 24px; margin: 0 0 4px; font-size: 12px; line-height: 24px; text-align: center; color: var(--b-t3); }
+.bots-main .meta { font-size: 12px; line-height: 16px; color: var(--b-t4); }
+
+/* ---- a card, in the conversation */
+.bots-main .card-slot:empty { display: none; }
+.bots-main .card-slot .card { width: min(100%, 560px); max-height: none; padding: 16px; gap: 8px; border: 0.5px solid var(--b-b2); border-radius: 20px; background: var(--b-elev); box-shadow: var(--b-shadow); }
+.bots-main .card-slot .card > h2:first-child, .bots-main .card-slot .card-label { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--b-t1); }
+.bots-main .card-slot .card-label + h2, .bots-main .card-slot .ask-q { font-size: 15px; line-height: 22px; font-weight: 600; }
+.bots-main .card-slot .ask-why { margin-top: 0; font-size: 13.5px; line-height: 20px; font-weight: 400; color: var(--b-t2); }
+.bots-main .card-details > summary { width: fit-content; list-style: none; cursor: pointer; font-size: 13px; line-height: 18px; font-weight: 500; }
+.bots-main .card-details > summary::-webkit-details-marker { display: none; }
+.bots-main .card-details > summary::after { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 0 3px 8px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); transition: transform 0.15s; }
+.bots-main .card-details[open] > summary::after { transform: rotate(225deg); margin-bottom: -1px; }
+.bots-main .card-details pre { margin-top: 8px; }
+.bots-main .card-slot .ask-links { justify-content: flex-end; margin-top: 4px; }
+.bots-main .card-slot .ask-links .btn { height: 36px; padding: 0 14px; border: 0; border-radius: 99px; background: var(--b-fill2); font-size: 14px; font-weight: 500; }
+.bots-main .card-slot .ask-links .btn:hover:not(:disabled) { background: var(--b-active); }
+.bots-main .card-slot .ask-links .btn.primary { order: 2; background: var(--bc); color: var(--onbc); }
+
+/* ---- the message box: one pill, 22 round, 18 once it has grown */
+.bots-main .box.asking { border-color: var(--b-b2); border-radius: 22px; }
+.bots-main .box:has(textarea:not([rows='1'])) { border-radius: 18px; }
+.bots-main .composer { padding: 7px 8px 7px 16px; }
+.bots-main .composer .tools-row { gap: 8px; }
+.bots-mic { flex: none; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--b-fill2); color: var(--b-t3); }
+.bots-mic:hover { color: var(--b-t1); }
+.bots-mic.on { background: var(--b-danger-tint); color: var(--b-danger); }
+.bots-mic svg { width: 16px; height: 16px; }
+
+/* ---- the header: Share as a raised pill */
+.bots-main .share-btn { background: var(--b-elev); box-shadow: 0 0 0 0.5px var(--b-b2), var(--b-shadow); font-size: 14px; font-weight: 500; }
+@media (min-width: 761px) { .bots-main .share-btn > svg { display: none; } }
+
+/* ---- the pane: tabs and chips */
+.bots-pane { background: var(--b-chrome); }
+.bots-close { right: 12px; top: 8px; width: 36px; height: 36px; }
+.bots-pane h2 { font-weight: 500; }
+.bots-tabs { display: flex; gap: 2px; margin-top: 16px; }
+.bots-tab { height: 28px; padding: 0 12px; border: 0; border-radius: 99px; background: none; font-size: 13px; line-height: 18px; color: var(--b-t2); }
+.bots-tab:hover { color: var(--b-t1); }
+.bots-tab.on { background: var(--b-fill2); color: var(--b-t1); }
+.bots-chips { align-self: flex-start; display: flex; gap: 6px; margin-top: 18px; }
+.bots-chip { height: 28px; padding: 0 12px; border: 0; border-radius: 99px; background: var(--b-fill2); font-size: 13px; line-height: 18px; color: var(--b-t1); }
+.bots-chip:hover { background: var(--b-active); }
+.bots-chip.on { background: var(--b-black); color: var(--b-black-mark); }
+.bots-label { margin: 16px 0 6px 4px; }
+.bots-tabs + .bots-label { margin-top: 18px; }
+.bots-card { background: var(--b-elev); }
+.bots-li { align-items: center; gap: 8px; padding: 7px 8px; }
+.bots-thumb { flex: none; width: 18px; height: 18px; border-radius: 4px; object-fit: cover; background: var(--b-fill2); }
+.bots-tabs + .bots-quiet, .bots-chips + .bots-quiet { margin-top: 18px; }

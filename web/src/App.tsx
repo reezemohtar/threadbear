@@ -8,6 +8,7 @@ import { useLiveQuery } from './live';
 import { InboxProvider, useInbox } from './inbox';
 import { useTranscript } from './transcript';
 import { ConvexError } from 'convex/values';
+import { createPortal } from 'react-dom';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import { go, threadPath, useRoute } from './route';
@@ -22,7 +23,7 @@ import { busy, Lists, ResizeHandle, type Row, useSidebarWidth } from './sidebar'
 import { Pop } from './menu';
 import { pastedOf } from './picture-chips';
 import { Rail } from './rail';
-import { botsOn } from './bots';
+import { botsOn, dayLine } from './bots';
 import { LazyBots } from './bots-lazy';
 import { NewThread, ProjectPage, ProjectsList, RunnerPage, RunnersList, ScheduledList, SchedulePage, UsageList, UsagePage } from './pages';
 import { duration, fold, splitTurns, type Item } from './turns';
@@ -115,7 +116,7 @@ function Shell({ token, route }: { token: string; route: ReturnType<typeof useRo
     return (
       <div className={`shell bots-shell ${open ? 'has-thread' : ''}`}>
         <Rail token={token} route={route} />
-        <LazyBots token={token} id={id} thread={(threadId, back) => <ThreadView key={threadId} token={token} threadId={threadId} back={back} />} />
+        <LazyBots token={token} id={id} thread={(threadId, back, chat) => <ThreadView key={threadId} token={token} threadId={threadId} back={back} chat={chat} />} />
       </div>
     );
   }
@@ -168,8 +169,15 @@ function Empty({ text }: { text: string }) {
 
 // ------------------------------------------------------------ thread
 
+// How the Bots page (bots-page.tsx) has a thread drawn, as a chat: its cards
+// in the conversation rather than joined to the message box, a line for each
+// new day, the bot's name in the message box, and anything of its own beside
+// Send (`tools`, handed a way to add text to what's typed). Nothing else
+// passes it, so every other thread looks as it did.
+export type ChatLook = { name: string; tools?: (add: (text: string) => void) => ReactNode };
+
 // `back`: where the back button goes, for a thread open inside another page.
-function ThreadView({ token, threadId, back = '/' }: { token: string; threadId: string; back?: string }) {
+function ThreadView({ token, threadId, back = '/', chat }: { token: string; threadId: string; back?: string; chat?: ChatLook }) {
   const t = useLiveQuery(api.phone.threadRow, { token, threadId });
   const shown = useTranscript(token, threadId);
   // For thread: links, as agents may give only the start of an id.
@@ -177,13 +185,16 @@ function ThreadView({ token, threadId, back = '/' }: { token: string; threadId: 
   const update = useMutation(api.phone.update);
   const [pending, setPending] = useState<Id<'commands'> | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  // Where the dock's card is drawn instead, for a chat (ChatLook).
+  const [cardSlot, setCardSlot] = useState<HTMLDivElement | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const keepFromBottom = useRef<number | null>(null);
   const seen = useRef(false);
   const lastSeq = shown?.messages.at(-1)?.seq;
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' });
-  }, [lastSeq, t?.status]);
+    // And once a chat's card has somewhere to be drawn (always null otherwise).
+  }, [lastSeq, t?.status, cardSlot]);
   // After loading earlier messages, stay where you were rather than jumping.
   useEffect(() => {
     const el = list.current;
@@ -293,7 +304,13 @@ function ThreadView({ token, threadId, back = '/' }: { token: string; threadId: 
             {shown.loadingMore ? 'Loading…' : 'Load earlier messages'}
           </button>
         ) : null}
-        {items.map(renderItem)}
+        {chat
+          ? items.map((item, i) => {
+              const before = items.slice(0, i).reverse().find((x) => x.kind === 'message');
+              const line = item.kind === 'message' ? dayLine(item.m.at, before?.kind === 'message' ? before.m.at : undefined, Date.now()) : undefined;
+              return line ? [<div key={`day${i}`} className="day-line">{line}</div>, renderItem(item)] : renderItem(item);
+            })
+          : items.map(renderItem)}
         {meta ? <div className="meta">{meta}</div> : null}
         {busy(t) ? (
           <div className="working">
@@ -302,13 +319,14 @@ function ThreadView({ token, threadId, back = '/' }: { token: string; threadId: 
         ) : t.status === 'error' ? (
           <div className="failed-note">The last turn failed. Send a message to try again.</div>
         ) : null}
+        {chat ? <div className="card-slot" ref={setCardSlot} /> : null}
         <div ref={bottom} />
       </div>
 
       <div className="dock">
         {pending ? <CommandState token={token} commandId={pending} onDone={() => setPending(null)} /> : null}
         <RecapBox thread={t} />
-        <Dock token={token} thread={t} lastSeq={lastSeq} onSent={setPending} onArchive={() => void act({ archive: true })} />
+        <Dock token={token} thread={t} lastSeq={lastSeq} onSent={setPending} onArchive={() => void act({ archive: true })} chat={chat} cardSlot={chat ? cardSlot : undefined} />
       </div>
     </article>
   );
@@ -373,7 +391,10 @@ function RecapBox({ thread: t }: { thread: Row }) {
   );
 }
 
-function Dock({ token, thread: t, lastSeq, onSent, onArchive }: { token: string; thread: Row; lastSeq?: number; onSent: (id: Id<'commands'>) => void; onArchive: () => void }) {
+// `cardSlot`: for a chat (ChatLook), the place in the conversation the card is
+// drawn, in place of on top of the composer. The card and what it sends are
+// the same either way.
+function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: { token: string; thread: Row; lastSeq?: number; onSent: (id: Id<'commands'>) => void; onArchive: () => void; chat?: ChatLook; cardSlot?: HTMLElement | null }) {
   const send = useMutation(api.phone.send);
   const interrupt = useMutation(api.phone.interrupt);
   const [text, setText] = useState('');
@@ -412,7 +433,7 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive }: { token: string;
   };
 
   const card = t.pendingApproval ? (
-    <ApprovalCard token={token} threadId={t.threadId} approval={t.pendingApproval} onSent={onSent} />
+    <ApprovalCard token={token} threadId={t.threadId} approval={t.pendingApproval} onSent={onSent} chat={!!chat} />
   ) : asks.length ? (
     <section className="card">
       <h2>
@@ -491,7 +512,7 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive }: { token: string;
   const ready = !!text.trim() || Object.values(by).some((n) => n >= 0) || follow.length > 0;
   return (
     <div className={`box ${t.pendingApproval || asks.length ? 'asking' : ''}`}>
-      {card}
+      {cardSlot === undefined ? card : cardSlot ? createPortal(card, cardSlot) : null}
       <form
         className="composer"
         onSubmit={(e) => {
@@ -502,7 +523,7 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive }: { token: string;
         <textarea
           value={text}
           rows={Math.min(10, Math.max(1, text.split('\n').length))}
-          placeholder={busy(t) ? 'Steer the agent' : asks.length ? 'Reply, or pick above' : 'Reply'}
+          placeholder={chat ? `Message ${chat.name}` : busy(t) ? 'Steer the agent' : asks.length ? 'Reply, or pick above' : 'Reply'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // Return sends, Shift-Return is a new line, as on the Mac. On a
@@ -515,6 +536,7 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive }: { token: string;
         />
         <div className="tools-row">
           <span className="grow" />
+          {chat?.tools?.((said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said)))}
           {busy(t) && !ready ? (
             // Stop only while nothing's typed, as on the Mac: a message
             // typed during a turn goes into it.
@@ -561,7 +583,9 @@ function followUpMessage(follow: string[], extra: string): string {
   return body;
 }
 
-function ApprovalCard({ token, threadId, approval, onSent }: { token: string; threadId: string; approval: Approval; onSent: (id: Id<'commands'>) => void }) {
+// `chat`: in a chat (ChatLook) an approval has a small label over it and its
+// input folded under Details.
+function ApprovalCard({ token, threadId, approval, onSent, chat }: { token: string; threadId: string; approval: Approval; onSent: (id: Id<'commands'>) => void; chat?: boolean }) {
   const respond = useMutation(api.phone.respond);
   const answer = useMutation(api.phone.answer);
   const secret = useMutation(api.phone.secret);
@@ -571,8 +595,16 @@ function ApprovalCard({ token, threadId, approval, onSent }: { token: string; th
     const label = { allow: 'Allow', allowAlways: 'Always allow', deny: 'Deny' } as Record<string, string>;
     return (
       <section className="card">
+        {chat ? <div className="card-label">Approval</div> : null}
         <h2>{approval.title || approval.name}</h2>
-        {approval.inputSummary ? <pre className="approval-input">{approval.inputSummary}</pre> : null}
+        {approval.inputSummary && chat ? (
+          <details className="card-details">
+            <summary>Details</summary>
+            <pre className="approval-input">{approval.inputSummary}</pre>
+          </details>
+        ) : approval.inputSummary ? (
+          <pre className="approval-input">{approval.inputSummary}</pre>
+        ) : null}
         <div className="ask-links">
           {approval.options.map((o) => (
             <button key={o} className={`btn ${o === 'allow' ? 'primary' : ''}`} onClick={async () => onSent(await respond({ token, threadId, approvalId: approval.approvalId, decision: o as 'allow' | 'allowAlways' | 'deny' }))}>

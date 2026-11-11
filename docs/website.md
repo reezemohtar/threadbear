@@ -169,6 +169,16 @@ sending and the cards are the same code, and the page's code is fetched
 only when it's opened.
 A bot's shape and colour come from its project's id (`lookOf`).
 
+Its chat is `ThreadView` with the optional `chat` look (`ChatLook` in
+`App.tsx`), which only this page passes: the dock's card is drawn into the
+conversation through a portal, so its state and what it sends are untouched,
+and the message box gets the bot's name and a mic (`bots-mic.tsx`). The mic
+uses the browser's speech recognition only when it reports it can work on
+the device (`canDictateHere`), and asks for that, so no audio leaves the
+machine; elsewhere it isn't drawn. The pane's Library lists what
+`phone:images` gives for the open chat (pictures, and which are pinned):
+pages, files and links aren't mirrored, so there are no chips for them.
+
 **Deploying:** `npm run web:deploy` runs `convex deploy` (prod) and then
 uploads `web/dist`. It asks before pushing to prod; from an agent, answer
 through a pseudo-terminal (`(sleep 40; printf 'y\r') | script -q /dev/null

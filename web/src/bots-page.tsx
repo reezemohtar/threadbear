@@ -14,13 +14,16 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, buildBots, chatFor, COLORS, isLive, liveOf, namedChat, readBotId, singleFlight, slimProject, startFolder, threadsOf, watchKeys, type Bot, type BotProject, type BotThread } from './bots';
+import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatFor, COLORS, isLive, libraryChips, libraryOf, liveOf, matchBots, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
+import { Mic } from './bots-mic';
+import type { ChatLook } from './App';
 import { projectLoader } from './bots-loader';
 import { Avatar } from './bots-avatar';
 import * as Icon from './icons';
 import './bots.css';
 
 const PANE_KEY = 'threadbear.botsDetails';
+const TAB_KEY = 'threadbear.botsPaneTab';
 // How many of a bot's chats the details pane lists.
 const RECENT = 12;
 
@@ -129,12 +132,22 @@ const STATUS_WORDS = { needs: 'Needs you', working: 'Working', failed: 'The last
 
 type ThreadRow = BotThread & { title: string };
 
-export function BotsPage({ token, id, thread }: { token: string; id?: string; thread: (threadId: string, back: string) => ReactNode }) {
+export function BotsPage({ token, id, thread }: { token: string; id?: string; thread: (threadId: string, back: string, chat: ChatLook) => ReactNode }) {
   const { botId, threadId: asked } = readBotId(id);
   const { projects, done, failed, retry, live, recheck } = useProjects(token, botId);
   const inbox = useInbox();
   const asleep = useLiveQuery(api.phone.threads, { token, view: 'hibernating' });
   const [pane, setPane] = useState(() => localStorage.getItem(PANE_KEY) !== '0');
+  // The list's own controls: a search that cuts it down as you type, and
+  // which sections are folded (kept in this browser).
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const [folded, setFolded] = useState(() => readFoldedBots(localStorage.getItem(BOTS_FOLDED_KEY)));
+  const fold = (which: Section) => {
+    const next = toggleFolded(folded, which);
+    localStorage.setItem(BOTS_FOLDED_KEY, JSON.stringify([...next]));
+    setFolded(next);
+  };
   useTick();
 
   // Both lists of open threads, or nothing: with only one, a bot whose chat is
@@ -178,26 +191,64 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
     setPane(!pane);
   };
   const count = lists ? allBots(lists).length : 0;
-  const section = (title: string, bots: Bot[]) =>
-    bots.length ? (
+  const shown = lists ? matchBots(lists, query) : undefined;
+  // While searching, every section is open: a match mustn't hide in a fold.
+  const section = (which: Section, title: string, bots: Bot[]) => {
+    const shut = folded.has(which) && !query.trim();
+    return bots.length ? (
       <>
-        <div className="bots-head">
+        <button className={`bots-head ${shut ? 'folded' : ''}`} aria-expanded={!shut} title={shut ? `Show ${title}` : `Hide ${title}`} onClick={() => fold(which)}>
           {title}
           <b>{bots.length}</b>
-        </div>
-        <div className="bots-rows">
-          {bots.map((b) => (
-            <BotRow key={b.id} bot={b} on={b.id === botId} />
-          ))}
-        </div>
+          <Icon.ChevronDown />
+        </button>
+        {shut ? null : (
+          <div className="bots-rows">
+            {bots.map((b) => (
+              <BotRow key={b.id} bot={b} on={b.id === botId} />
+            ))}
+          </div>
+        )}
       </>
     ) : null;
+  };
 
   return (
     <div className={`bots ${botId ? 'has-bot' : ''}`}>
       <aside className="bots-list">
         <header className="bots-bar">
-          <h1>Bots</h1>
+          {searching ? (
+            <div className="bots-search">
+              <Icon.Search />
+              <input
+                autoFocus
+                type="text"
+                value={query}
+                placeholder="Search bots"
+                aria-label="Search bots"
+                spellCheck={false}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Escape') return;
+                  setQuery('');
+                  setSearching(false);
+                }}
+              />
+            </div>
+          ) : (
+            <h1>Bots</h1>
+          )}
+          <button
+            className={`bots-round ${searching ? 'on' : ''}`}
+            title={searching ? 'Close the search' : 'Search bots'}
+            aria-label={searching ? 'Close the search' : 'Search bots'}
+            onClick={() => {
+              setQuery('');
+              setSearching(!searching);
+            }}
+          >
+            {searching ? <Icon.Close /> : <Icon.Search />}
+          </button>
         </header>
         <nav className="bots-scroll" aria-label="Bots">
           {lists && !count && !done && failed ? (
@@ -208,15 +259,16 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
             <div className="bots-note">No bots yet. A project is a bot when one of its folders is inside a folder named bots.</div>
           ) : (
             <>
-              {lists.pinned.length ? (
+              {shown!.pinned.length ? (
                 <div className="bots-strip">
-                  {lists.pinned.map((b) => (
+                  {shown!.pinned.map((b) => (
                     <BotTile key={b.id} bot={b} on={b.id === botId} />
                   ))}
                 </div>
               ) : null}
-              {section('Business', lists.business)}
-              {section('Personal', lists.personal)}
+              {section('business', 'Business', shown!.business)}
+              {section('personal', 'Personal', shown!.personal)}
+              {query.trim() && !allBots(shown!).length ? <div className="bots-note">No bots match.</div> : null}
               {done ? null : failed ? <Unread count={failed} retry={retry} /> : <div className="bots-note">Looking for more…</div>}
             </>
           )}
@@ -231,7 +283,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
             {openRow ? <span className="bots-island-chat">{openRow.title || 'Untitled'}</span> : null}
           </button>
           {open ? (
-            thread(open, botPath())
+            thread(open, botPath(), { name: bot.title, tools: (add) => <Mic onText={add} /> })
           ) : asked ? (
             <NotItsChat bot={bot} checking={named === 'checking'} />
           ) : (
@@ -244,7 +296,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
           <div className="bots-blank">{lists && botId && !done && failed ? <Unread count={failed} retry={retry} /> : !lists || (botId && !done) ? 'Loading…' : botId ? 'That bot has gone.' : count ? 'Pick a bot.' : ''}</div>
         </section>
       )}
-      {bot && pane ? <Details token={token} bot={bot} threads={threads} open={open} close={togglePane} /> : null}
+      {bot && pane ? <Pane token={token} bot={bot} threads={threads} open={open} close={togglePane} /> : null}
     </div>
   );
 }
@@ -274,7 +326,7 @@ function Dot({ bot }: { bot: Bot }) {
 
 function BotRow({ bot, on }: { bot: Bot; on: boolean }) {
   return (
-    <a className={`bot-row ${on ? 'on' : ''}`} href={botPath(bot.id)} title={bot.role || bot.title} onClick={openBot(bot)}>
+    <a className={`bot-row ${on ? 'on' : ''}`} href={botPath(bot.id)} title={[bot.role || bot.title, bot.at ? `active ${ago(bot.at)}` : ''].filter(Boolean).join(', ')} onClick={openBot(bot)}>
       <span className="bot-av">
         <Avatar look={bot.look} size={36} />
         <Dot bot={bot} />
@@ -282,14 +334,11 @@ function BotRow({ bot, on }: { bot: Bot; on: boolean }) {
       <span className="bot-text">
         <span className="bot-top">
           <span className="bot-name">{bot.title}</span>
-          {bot.at ? <span className="bot-time">{ago(bot.at)}</span> : null}
         </span>
         <span className={`bot-line ${bot.status}`}>{bot.line}</span>
       </span>
       {bot.unread ? (
-        <span className="bot-badge" title={bot.unread === 1 ? '1 unread chat' : `${bot.unread} unread chats`}>
-          {bot.unread}
-        </span>
+        <i className="bot-unread" role="img" aria-label={bot.unread === 1 ? '1 unread chat' : `${bot.unread} unread chats`} title={bot.unread === 1 ? '1 unread chat' : `${bot.unread} unread chats`} />
       ) : null}
     </a>
   );
@@ -434,6 +483,7 @@ function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: 
               }}
             />
             <div className="tools-row">
+              <Mic onText={(said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said))} />
               <button className="send" disabled={!text.trim() || busy || !folder} aria-label="Start the chat" title={busy ? 'Starting the chat' : folder ? `Start the chat in ${folder}` : live.state === 'failed' ? 'This bot’s folder couldn’t be checked' : 'Waiting for this bot’s folder'}>
                 {busy ? <span className="spinner" /> : <Icon.Up />}
               </button>
@@ -445,14 +495,19 @@ function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: 
   );
 }
 
-// Beside the chat on a wide window: who the bot is and its recent chats,
-// archived ones too.
-function Details({ token, bot, threads, open, close }: { token: string; bot: Bot; threads: Parameters<typeof threadsOf>[1]; open?: string; close: () => void }) {
-  const joined = useLiveQuery(api.phone.projectThreads, { token, projectId: bot.id, limit: RECENT });
-  const recent = threadsOf(bot, [...threads, ...(joined ?? [])]).slice(0, RECENT);
+// Beside the chat on a wide window: who the bot is, then two tabs. Activity
+// is its recent chats, archived ones too. Library is what the website is
+// really given of the open chat's files, which today is its pictures
+// (libraryOf): a chip shows only when there's something behind it.
+function Pane({ token, bot, threads, open, close }: { token: string; bot: Bot; threads: Parameters<typeof threadsOf>[1]; open?: string; close: () => void }) {
+  const [tab, setTab] = useState<'activity' | 'library'>(() => (localStorage.getItem(TAB_KEY) === 'library' ? 'library' : 'activity'));
+  const pick = (next: 'activity' | 'library') => {
+    localStorage.setItem(TAB_KEY, next);
+    setTab(next);
+  };
   return (
     <aside className="bots-pane" aria-label={`About ${bot.title}`}>
-      <button className="icon-btn bots-close" onClick={close} aria-label="Hide the details" title="Hide the details">
+      <button className="bots-round bots-close" onClick={close} aria-label="Hide the details" title="Hide the details">
         <Icon.Close />
       </button>
       <div className="bots-hero">
@@ -460,6 +515,24 @@ function Details({ token, bot, threads, open, close }: { token: string; bot: Bot
       </div>
       <h2>{bot.title}</h2>
       {bot.role ? <p className="bots-role">{bot.role}</p> : null}
+      <div className="bots-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'activity'} className={`bots-tab ${tab === 'activity' ? 'on' : ''}`} title="This bot's recent chats" onClick={() => pick('activity')}>
+          Activity
+        </button>
+        <button role="tab" aria-selected={tab === 'library'} className={`bots-tab ${tab === 'library' ? 'on' : ''}`} title="Pictures from the open chat" onClick={() => pick('library')}>
+          Library
+        </button>
+      </div>
+      {tab === 'activity' ? <Activity token={token} bot={bot} threads={threads} open={open} /> : <Library key={open ?? ''} token={token} threadId={open} />}
+    </aside>
+  );
+}
+
+function Activity({ token, bot, threads, open }: { token: string; bot: Bot; threads: Parameters<typeof threadsOf>[1]; open?: string }) {
+  const joined = useLiveQuery(api.phone.projectThreads, { token, projectId: bot.id, limit: RECENT });
+  const recent = threadsOf(bot, [...threads, ...(joined ?? [])]).slice(0, RECENT);
+  return (
+    <>
       <div className="bots-label">Recent chats</div>
       {recent.length ? (
         <div className="bots-card">
@@ -483,6 +556,39 @@ function Details({ token, bot, threads, open, close }: { token: string; bot: Bot
       ) : (
         <div className="bots-quiet">{joined ? 'No chats yet.' : 'Loading…'}</div>
       )}
-    </aside>
+    </>
+  );
+}
+
+const CHIP_WORDS: Record<LibraryChip, string> = { pinned: 'Pinned', media: 'Media' };
+
+function Library({ token, threadId }: { token: string; threadId?: string }) {
+  const images = useLiveQuery(api.phone.images, threadId ? { token, threadId, from: 0 } : 'skip');
+  const [chip, setChip] = useState<LibraryChip>();
+  if (!threadId) return <div className="bots-quiet">Open a chat to see its pictures.</div>;
+  if (!images) return <div className="bots-quiet">Loading…</div>;
+  const library = libraryOf(images);
+  const chips = libraryChips(library);
+  if (!chips.length) return <div className="bots-quiet">No pictures in this chat yet. Pages and files stay on the Mac for now.</div>;
+  const on = chip && chips.includes(chip) ? chip : chips[0]!;
+  return (
+    <>
+      <div className="bots-chips">
+        {chips.map((c) => (
+          <button key={c} className={`bots-chip ${c === on ? 'on' : ''}`} aria-pressed={c === on} title={c === 'pinned' ? 'Pictures pinned in this chat' : 'Every picture in this chat'} onClick={() => setChip(c)}>
+            {CHIP_WORDS[c]}
+          </button>
+        ))}
+      </div>
+      <div className="bots-label">From this chat</div>
+      <div className="bots-card">
+        {library[on].map((p, i) => (
+          <a key={p.url} className="bots-li" href={p.url} target="_blank" rel="noreferrer" title="Open this picture in a new tab">
+            <img className="bots-thumb" src={p.url} alt="" loading="lazy" />
+            <span className="bots-li-title">Picture {library[on].length - i}</span>
+          </a>
+        ))}
+      </div>
+    </>
   );
 }
