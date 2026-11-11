@@ -42,13 +42,17 @@ export type BotThread = {
 export type Section = 'business' | 'personal';
 export type BotStatus = 'needs' | 'working' | 'failed' | 'idle';
 
-export const SHAPES = ['circle', 'squircle', 'hexagon', 'octagon', 'diamond', 'shield', 'pill', 'arch', 'drop', 'ticket', 'pentagon', 'gem'] as const;
-export type Shape = (typeof SHAPES)[number];
+// A bot's avatar is a robot head, our own drawing (bots-avatar.tsx): what's
+// on top, the head's outline, the eyes in its visor, and a colour. Each is
+// picked apart from the others.
+export const TOPS = ['antenna', 'pods', 'feelers', 'none'] as const;
+export const HEADS = ['square', 'wide', 'dome'] as const;
+export const VISORS = ['round', 'bar', 'smile'] as const;
 // Fills from the design spec's hues. `black` turns to near-white in dark
-// (bots.css), as a black shape on a black list can't be seen.
+// (bots.css), as a black head on a black list can't be seen.
 export const COLORS = { black: '#1c1c1c', red: '#e72e3b', orange: '#ee620d', amber: '#da830e', green: '#10ab61', cyan: '#10a693', blue: '#1680f3', violet: '#8351e4', magenta: '#e52f8b', gray: '#7d7d82', brown: '#9d6937' } as const;
 export type Color = keyof typeof COLORS;
-export type Look = { shape: Shape; color: Color };
+export type Look = { top: (typeof TOPS)[number]; head: (typeof HEADS)[number]; visor: (typeof VISORS)[number]; color: Color };
 
 export type Bot = {
   // The project's id, which is also what the page's address carries.
@@ -121,11 +125,11 @@ function hash(text: string): number {
   return h >>> 0;
 }
 
-/** A bot's shape and colour, from its project's id until it can be picked. */
+/** A bot's look, from its project's id until one can be picked and saved. */
 export function lookOf(key: string): Look {
   const h = hash(key);
   const colors = Object.keys(COLORS) as Color[];
-  return { shape: SHAPES[h % SHAPES.length]!, color: colors[Math.floor(h / SHAPES.length) % colors.length]! };
+  return { top: TOPS[h % 4]!, head: HEADS[Math.floor(h / 4) % 3]!, visor: VISORS[Math.floor(h / 12) % 3]!, color: colors[Math.floor(h / 36) % colors.length]! };
 }
 
 const busy = (t: { status: string }) => t.status === 'running' || t.status === 'starting';
@@ -336,10 +340,13 @@ export function toggleFolded(folded: Set<Section>, section: Section): Set<Sectio
 // ------------------------------------------------------------ the library
 
 // What the website is given of a chat's files today: its pictures
-// (phone:images), each with whether it was pinned. Pages, files and links
-// stay on the Mac, so the Library has no chips for them.
+// (phone:images). Pages, files and links stay on the Mac, so the Library has
+// no chips for them. Nor one for Pinned yet: the API marks a pinned picture,
+// but leaves the mark off one that is also shown in a reply
+// (convex/share.ts, replyImagesFrom), so a Pinned list made here would
+// silently miss pictures. That needs the backend to keep the pin.
 export type LibraryPicture = { seq: number; url: string; pinned?: boolean; src?: string };
-export type LibraryChip = 'pinned' | 'media';
+export type LibraryChip = 'media';
 
 /** A chat's pictures for the Library, newest first, each once. */
 export function libraryOf(images: LibraryPicture[]): Record<LibraryChip, LibraryPicture[]> {
@@ -351,12 +358,47 @@ export function libraryOf(images: LibraryPicture[]): Record<LibraryChip, Library
       seen.add(p.url);
       return true;
     });
-  return { pinned: media.filter((p) => p.pinned), media };
+  return { media };
 }
 
 /** The chips to show: only the ones with something real behind them. */
 export function libraryChips(library: Record<LibraryChip, LibraryPicture[]>): LibraryChip[] {
-  return (['pinned', 'media'] as const).filter((chip) => library[chip].length > 0);
+  return (['media'] as const).filter((chip) => library[chip].length > 0);
+}
+
+// ------------------------------------------------------------ a card in the conversation
+
+/**
+ * Whether the conversation should scroll to keep its card (a question or an
+ * approval, with its buttons) in view after the card changed or its size
+ * did. Yes for a new or replaced card, as it's waiting on an answer. For
+ * the same card growing or shrinking (Details opened), only if the reader
+ * was at the bottom before it did: `distance` is how far from the bottom
+ * they are now, `grew` how much taller the card just got. Someone who has
+ * scrolled up to read is left where they are.
+ */
+export function followCard(change: { replaced: boolean; distance: number; grew: number }): boolean {
+  if (change.replaced) return true;
+  return change.distance - Math.max(0, change.grew) <= 80;
+}
+
+// ------------------------------------------------------------ dictation and Send
+
+export type MicState = 'idle' | 'listening' | 'stopping';
+
+/**
+ * Whether Send waits for the mic. While it's listening, or has been told to
+ * stop and hasn't yet said it has, words may still be on their way: sending
+ * then would leave them out of the message and drop them into the next
+ * one. So Send is held until the mic is idle.
+ */
+export function micHolds(state: MicState): boolean {
+  return state !== 'idle';
+}
+
+/** An approval's buttons in the order they're shown and tabbed through: the one that allows it last. */
+export function approvalOrder(options: string[]): string[] {
+  return [...options].sort((a, b) => Number(a === 'allow') - Number(b === 'allow'));
 }
 
 // ------------------------------------------------------------ the chat's date lines

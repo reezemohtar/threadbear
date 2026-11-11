@@ -23,7 +23,7 @@ import { busy, Lists, ResizeHandle, type Row, useSidebarWidth } from './sidebar'
 import { Pop } from './menu';
 import { pastedOf } from './picture-chips';
 import { Rail } from './rail';
-import { botsOn, dayLine } from './bots';
+import { approvalOrder, botsOn, dayLine, followCard } from './bots';
 import { LazyBots } from './bots-lazy';
 import { NewThread, ProjectPage, ProjectsList, RunnerPage, RunnersList, ScheduledList, SchedulePage, UsageList, UsagePage } from './pages';
 import { duration, fold, splitTurns, type Item } from './turns';
@@ -172,9 +172,10 @@ function Empty({ text }: { text: string }) {
 // How the Bots page (bots-page.tsx) has a thread drawn, as a chat: its cards
 // in the conversation rather than joined to the message box, a line for each
 // new day, the bot's name in the message box, and anything of its own beside
-// Send (`tools`, handed a way to add text to what's typed). Nothing else
-// passes it, so every other thread looks as it did.
-export type ChatLook = { name: string; tools?: (add: (text: string) => void) => ReactNode };
+// Send (`tools`, handed a way to add text to what's typed, and to hold Send
+// while more text is on its way). Nothing else passes it, so every other
+// thread looks as it did.
+export type ChatLook = { name: string; tools?: (box: { add: (text: string) => void; hold: (held: boolean) => void }) => ReactNode };
 
 // `back`: where the back button goes, for a thread open inside another page.
 function ThreadView({ token, threadId, back = '/', chat }: { token: string; threadId: string; back?: string; chat?: ChatLook }) {
@@ -193,8 +194,30 @@ function ThreadView({ token, threadId, back = '/', chat }: { token: string; thre
   const lastSeq = shown?.messages.at(-1)?.seq;
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' });
-    // And once a chat's card has somewhere to be drawn (always null otherwise).
-  }, [lastSeq, t?.status, cardSlot]);
+  }, [lastSeq, t?.status]);
+  // A chat's card (ChatLook) is kept in view with its buttons: when it's new
+  // or another takes its place, and when it grows or shrinks (Details) under
+  // someone reading at the bottom. Someone scrolled up is left there
+  // (followCard). Never runs otherwise: cardSlot stays null.
+  const cardKey = t?.pendingApproval?.approvalId ?? (t?.asks?.length ? `asks ${t.asksSeq}` : t?.next?.length ? `next ${lastSeq}` : '');
+  const cardSeen = useRef({ key: '', height: 0 });
+  useEffect(() => {
+    if (!cardSlot) return;
+    const settle = () => {
+      const el = list.current;
+      if (!el) return;
+      const height = cardSlot.offsetHeight;
+      const replaced = cardSeen.current.key !== cardKey && !!cardKey;
+      const grew = height - cardSeen.current.height;
+      cardSeen.current = { key: cardKey, height };
+      if (!height || (!replaced && !grew)) return;
+      if (followCard({ replaced, distance: el.scrollHeight - el.scrollTop - el.clientHeight, grew })) bottom.current?.scrollIntoView({ block: 'end' });
+    };
+    settle();
+    const watch = new ResizeObserver(settle);
+    watch.observe(cardSlot);
+    return () => watch.disconnect();
+  }, [cardSlot, cardKey]);
   // After loading earlier messages, stay where you were rather than jumping.
   useEffect(() => {
     const el = list.current;
@@ -421,7 +444,10 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: 
   const next = done ? (t.next ?? []) : [];
   const follow = ticked.seq === lastSeq ? [...ticked.set].sort().map((i) => next[i]).filter((x): x is string => !!x) : [];
 
+  // A chat's tool (the mic) holds Send while words are still on their way.
+  const [held, setHeld] = useState(false);
   const submit = async () => {
+    if (held) return;
     const answers = asks.flatMap((a, i) => (by[i] !== undefined && choices(a)[by[i]!] !== undefined ? [{ index: i, action: a.action, answer: choices(a)[by[i]!]! }] : []));
     const extra = text.trim();
     const body = follow.length ? followUpMessage(follow, extra) : answers.length ? answerMessage(asks.length, answers, extra) : extra;
@@ -536,7 +562,7 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: 
         />
         <div className="tools-row">
           <span className="grow" />
-          {chat?.tools?.((said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said)))}
+          {chat?.tools?.({ add: (said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said)), hold: setHeld })}
           {busy(t) && !ready ? (
             // Stop only while nothing's typed, as on the Mac: a message
             // typed during a turn goes into it.
@@ -550,7 +576,7 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: 
               </button>
             )
           ) : (
-            <button className="send" disabled={!ready} aria-label="Send" title="Send">
+            <button className="send" disabled={!ready || held} aria-label="Send" title={held ? 'Stop dictating to send' : 'Send'}>
               <Icon.Up />
             </button>
           )}
@@ -606,7 +632,7 @@ function ApprovalCard({ token, threadId, approval, onSent, chat }: { token: stri
           <pre className="approval-input">{approval.inputSummary}</pre>
         ) : null}
         <div className="ask-links">
-          {approval.options.map((o) => (
+          {(chat ? approvalOrder(approval.options) : approval.options).map((o) => (
             <button key={o} className={`btn ${o === 'allow' ? 'primary' : ''}`} onClick={async () => onSent(await respond({ token, threadId, approvalId: approval.approvalId, decision: o as 'allow' | 'allowAlways' | 'deny' }))}>
               {label[o] ?? o}
             </button>

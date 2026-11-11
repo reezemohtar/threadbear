@@ -167,7 +167,7 @@ own runner. A chat named in the address (`/bots/<project>~<thread>`) is
 shown only while it's that bot's (its row is watched). The chat is `ThreadView` from `App.tsx`, so
 sending and the cards are the same code, and the page's code is fetched
 only when it's opened.
-A bot's shape and colour come from its project's id (`lookOf`).
+A bot's avatar (a robot head: top, head, eyes, colour) comes from its project's id (`lookOf`).
 
 Its chat is `ThreadView` with the optional `chat` look (`ChatLook` in
 `App.tsx`), which only this page passes: the dock's card is drawn into the
@@ -175,9 +175,11 @@ conversation through a portal, so its state and what it sends are untouched,
 and the message box gets the bot's name and a mic (`bots-mic.tsx`). The mic
 uses the browser's speech recognition only when it reports it can work on
 the device (`canDictateHere`), and asks for that, so no audio leaves the
-machine; elsewhere it isn't drawn. The pane's Library lists what
-`phone:images` gives for the open chat (pictures, and which are pinned):
-pages, files and links aren't mirrored, so there are no chips for them.
+machine; elsewhere it isn't drawn. Send is held while it listens or is
+stopping (`micHolds`). The pane's Library lists what `phone:images` gives
+for the open chat, which is its pictures: pages, files and links aren't
+mirrored, so there are no chips for them, and none for Pinned until the API
+keeps the pin on a picture that's also in a reply (`replyImagesFrom`).
 
 **Deploying:** `npm run web:deploy` runs `convex deploy` (prod) and then
 uploads `web/dist`. It asks before pushing to prod; from an agent, answer

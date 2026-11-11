@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatFor, COLORS, isLive, libraryChips, libraryOf, liveOf, matchBots, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
+import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatFor, COLORS, isLive, libraryChips, libraryOf, liveOf, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
 import { Mic } from './bots-mic';
 import type { ChatLook } from './App';
 import { projectLoader } from './bots-loader';
@@ -283,7 +283,7 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
             {openRow ? <span className="bots-island-chat">{openRow.title || 'Untitled'}</span> : null}
           </button>
           {open ? (
-            thread(open, botPath(), { name: bot.title, tools: (add) => <Mic onText={add} /> })
+            thread(open, botPath(), { name: bot.title, tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })
           ) : asked ? (
             <NotItsChat bot={bot} checking={named === 'checking'} />
           ) : (
@@ -402,6 +402,8 @@ function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: 
   const create = useMutation(api.phone.create);
   const [text, setText] = useState('');
   const [starting, setStarting] = useState(false);
+  // The mic holds Send while words are still on their way.
+  const [held, setHeld] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<Id<'commands'> | null>(null);
   const command = useLiveQuery(api.phone.command, pending ? { token, commandId: pending } : 'skip');
@@ -418,7 +420,7 @@ function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: 
   const busy = starting || !!pending;
   const submit = async () => {
     const body = text.trim();
-    if (!body || busy || !project || !folder) return;
+    if (!body || busy || !project || !folder || held) return;
     setStarting(true);
     setError('');
     try {
@@ -483,8 +485,8 @@ function NoChat({ token, bot, live, recheck }: { token: string; bot: Bot; live: 
               }}
             />
             <div className="tools-row">
-              <Mic onText={(said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said))} />
-              <button className="send" disabled={!text.trim() || busy || !folder} aria-label="Start the chat" title={busy ? 'Starting the chat' : folder ? `Start the chat in ${folder}` : live.state === 'failed' ? 'This bot’s folder couldn’t be checked' : 'Waiting for this bot’s folder'}>
+              <Mic onText={(said) => setText((typed) => (typed.trim() ? `${typed.replace(/\s+$/, '')} ${said}` : said))} onState={(state) => setHeld(micHolds(state))} />
+              <button className="send" disabled={!text.trim() || busy || !folder || held} aria-label="Start the chat" title={busy ? 'Starting the chat' : folder ? `Start the chat in ${folder}` : live.state === 'failed' ? 'This bot’s folder couldn’t be checked' : 'Waiting for this bot’s folder'}>
                 {busy ? <span className="spinner" /> : <Icon.Up />}
               </button>
             </div>
@@ -560,7 +562,7 @@ function Activity({ token, bot, threads, open }: { token: string; bot: Bot; thre
   );
 }
 
-const CHIP_WORDS: Record<LibraryChip, string> = { pinned: 'Pinned', media: 'Media' };
+const CHIP_WORDS: Record<LibraryChip, string> = { media: 'Media' };
 
 function Library({ token, threadId }: { token: string; threadId?: string }) {
   const images = useLiveQuery(api.phone.images, threadId ? { token, threadId, from: 0 } : 'skip');
@@ -575,7 +577,7 @@ function Library({ token, threadId }: { token: string; threadId?: string }) {
     <>
       <div className="bots-chips">
         {chips.map((c) => (
-          <button key={c} className={`bots-chip ${c === on ? 'on' : ''}`} aria-pressed={c === on} title={c === 'pinned' ? 'Pictures pinned in this chat' : 'Every picture in this chat'} onClick={() => setChip(c)}>
+          <button key={c} className={`bots-chip ${c === on ? 'on' : ''}`} aria-pressed={c === on} title="Every picture in this chat" onClick={() => setChip(c)}>
             {CHIP_WORDS[c]}
           </button>
         ))}

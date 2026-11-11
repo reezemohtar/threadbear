@@ -31,7 +31,7 @@ Off by default. No backend, runner or Mac app code changed.
 | `web/src/bots-page.tsx`, `web/src/bots.css` | The page and its look |
 | `web/src/bots-lazy.tsx` | Fetches the page only when it's opened, with a Reload if that fetch fails |
 | `web/src/bots-mic.tsx` | The mic in a bot's message box: on-device dictation, drawn only where the browser can do it |
-| `web/src/bots-avatar.tsx` | The 12 avatar shapes (our own drawings) and the rail icon |
+| `web/src/bots-avatar.tsx` | The robot-head avatars (our own drawings: a top, a head, a visor) and the rail icon |
 | `web/mock/` | The site on made-up data with no backend, for looking at a page (dev server only) |
 | `runner/src/experiments/bots.md` | The experiment's file. Its `reminder` is a placeholder: no check-in schedule is booked |
 | `FORK.md` | This file |
@@ -46,7 +46,7 @@ folding sections. Web only, still the `bots` experiment, off by default.
 
 | File | Change | Why |
 |---|---|---|
-| `web/src/App.tsx` | `ThreadView`, `Dock` and `ApprovalCard` take an optional `chat` (type `ChatLook`), passed only by the Bots page. With it: the dock's card is drawn through a portal into a slot in the conversation, a line is drawn for each new day, the message box says "Message <name>" and can hold a tool beside Send, and an approval gets a label and a Details fold. Two imports. | The reference shows cards in the conversation and a mic in the message box. The card, its state and what it sends are the same code either way; without `chat` nothing changes |
+| `web/src/App.tsx` | `ThreadView`, `Dock` and `ApprovalCard` take an optional `chat` (type `ChatLook`), passed only by the Bots page. With it: the dock's card is drawn through a portal into a slot in the conversation, a line is drawn for each new day, the message box says "Message <name>" and can hold a tool beside Send, and an approval gets a label and a Details fold. Two imports. | The reference shows cards in the conversation and a mic in the message box. The card, its state and what it sends are the same code either way; without `chat` nothing changes. Rebased onto release 2026-11-11 (main `855d383e`): Mike's recap box above the dock, his Stop button in place of Send while a turn runs, his Recommended mark and option notes are all kept as he wrote them; the `chat` props sit beside them (the mic's tool goes before his Send/Stop block, the card slot is watched for size so its buttons stay in view, and in a chat an approval's buttons are rendered in shown order) |
 | `docs/website.md`, `docs/experiments.md` | The Bots section and the experiment's text | Repo rule: docs stay true |
 
 ## Fixes to Mike's code, until his release has them

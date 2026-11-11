@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, SHAPES, statusOf, threadsOf, type BotProject, type BotThread } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, chatFor, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds } from './bots.ts';
 
 const NOW = Date.parse('2026-11-11T10:00:00Z');
 let n = 0;
@@ -35,16 +35,18 @@ test('the role is the first line of the goals that is not the section line', () 
   assert.equal(roleOf(''), '');
 });
 
-test('a look is one of the 12 shapes and a colour, the same every time', () => {
-  const looks = Array.from({ length: 200 }, (_, i) => lookOf(`project-${i}`));
+test('a look is a top, a head, eyes and a colour, each picked apart, the same every time', () => {
+  const looks = Array.from({ length: 400 }, (_, i) => lookOf(`project-${i}`));
   for (const l of looks) {
-    assert.ok(SHAPES.includes(l.shape));
+    assert.ok(TOPS.includes(l.top) && HEADS.includes(l.head) && VISORS.includes(l.visor));
     assert.ok(l.color in COLORS);
   }
   assert.deepEqual(lookOf('project-7'), lookOf('project-7'));
-  assert.equal(new Set(looks.map((l) => l.shape)).size, SHAPES.length, 'every shape gets used');
+  assert.equal(new Set(looks.map((l) => l.top)).size, 4, 'every top gets used');
+  assert.equal(new Set(looks.map((l) => l.head)).size, 3);
+  assert.equal(new Set(looks.map((l) => l.visor)).size, 3);
   assert.equal(new Set(looks.map((l) => l.color)).size, Object.keys(COLORS).length, 'every colour gets used');
-  assert.ok(new Set(looks.map((l) => `${l.shape}/${l.color}`)).size > 60, 'shape and colour vary apart');
+  assert.ok(new Set(looks.map((l) => `${l.top}/${l.head}/${l.visor}`)).size >= 30, 'the parts vary apart, so few bots look alike');
 });
 
 test("a bot's threads are its project's and any in its own folder, newest first, each once", () => {
@@ -313,9 +315,8 @@ test('folded sections are remembered, and junk in the saved value is ignored', (
   assert.deepEqual([...readFoldedBots(JSON.stringify([...toggleFolded(once, 'personal')]))].sort(), ['business', 'personal']);
 });
 
-test('the library holds only what the website is really given: pictures, and which are pinned', () => {
-  const none = libraryOf([]);
-  assert.deepEqual(libraryChips(none), [], 'no pictures: no chips at all');
+test('the library holds only what the website is really given: pictures', () => {
+  assert.deepEqual(libraryChips(libraryOf([])), [], 'no pictures: no chips at all');
   const lib = libraryOf([
     { seq: 3, url: 'https://example.invalid/a.png' },
     { seq: 9, url: 'https://example.invalid/b.png', pinned: true },
@@ -323,9 +324,20 @@ test('the library holds only what the website is really given: pictures, and whi
     { seq: 7, url: '' },
   ]);
   assert.deepEqual(lib.media.map((p) => p.seq), [9, 5], 'newest first, each picture once, none without an address');
-  assert.deepEqual(lib.pinned.map((p) => p.seq), [9]);
-  assert.deepEqual(libraryChips(lib), ['pinned', 'media']);
-  assert.deepEqual(libraryChips(libraryOf([{ seq: 1, url: 'https://example.invalid/c.png' }])), ['media'], 'nothing pinned: no Pinned chip');
+  assert.deepEqual(libraryChips(lib), ['media']);
+});
+
+test('there is no Pinned list while the API can drop a pin', () => {
+  // A picture pinned AND shown in a reply arrives without its pin (convex/share.ts,
+  // replyImagesFrom), so a list of the pinned ones would be missing it.
+  const asTheApiSendsIt = [
+    { seq: 4, url: 'https://example.invalid/pinned-and-in-a-reply.png', src: 'chart.png' },
+    { seq: 6, url: 'https://example.invalid/pinned-only.png', pinned: true },
+  ];
+  const lib = libraryOf(asTheApiSendsIt);
+  assert.deepEqual(Object.keys(lib), ['media'], 'no pinned list is made at all');
+  assert.equal(lib.media.length, 2, 'both pictures are in Media, pin or no pin');
+  assert.deepEqual(libraryChips(lib), ['media']);
 });
 
 test('a date line goes above the first message and the first of each new day', () => {
@@ -354,4 +366,28 @@ test('the mic is offered only where speech can be turned to text on the device',
   assert.deepEqual(asked, [{ langs: ['en-US'], processLocally: true }], 'it asks for on-device only');
   assert.equal(await canDictateHere(class { static async available() { return 'downloadable'; } }, 'en-US'), false, 'not without a download nobody asked for');
   assert.equal(await canDictateHere(class { static async available() { throw new Error('no'); } }, 'en-US'), false);
+});
+
+test('the conversation follows its card when the card is new, or grows under someone at the bottom', () => {
+  assert.equal(followCard({ replaced: true, distance: 900, grew: 0 }), true, 'a new approval: its buttons must be seen');
+  // Details opened: the card is 140 taller, so the bottom is now 140 away.
+  assert.equal(followCard({ replaced: false, distance: 140, grew: 140 }), true, 'they were at the bottom before it grew');
+  assert.equal(followCard({ replaced: false, distance: 700, grew: 140 }), false, 'they had scrolled up to read: left alone');
+  assert.equal(followCard({ replaced: false, distance: 60, grew: -140 }), true, 'Details closed, near the bottom');
+  assert.equal(followCard({ replaced: false, distance: 81, grew: 0 }), false);
+});
+
+test('Send waits while the mic is listening or still stopping', () => {
+  assert.equal(micHolds('idle'), false);
+  assert.equal(micHolds('listening'), true);
+  assert.equal(micHolds('stopping'), true, 'the last words may still be on their way');
+});
+
+test("an approval's buttons are shown and tabbed in one order, the allowing one last", () => {
+  assert.deepEqual(approvalOrder(['allow', 'deny']), ['deny', 'allow']);
+  assert.deepEqual(approvalOrder(['allow', 'allowAlways', 'deny']), ['allowAlways', 'deny', 'allow']);
+  assert.deepEqual(approvalOrder(['deny']), ['deny']);
+  const given = ['allow', 'deny'];
+  approvalOrder(given);
+  assert.deepEqual(given, ['allow', 'deny'], 'what the thread sent is left as it was');
 });

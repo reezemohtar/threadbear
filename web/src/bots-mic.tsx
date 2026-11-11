@@ -3,7 +3,7 @@
 // device itself (canDictateHere in bots.ts), and asks for exactly that, so no
 // audio is sent anywhere. Elsewhere there's no button at all.
 import { useEffect, useRef, useState } from 'react';
-import { canDictateHere } from './bots';
+import { canDictateHere, type MicState } from './bots';
 
 type Recognition = {
   lang: string;
@@ -20,9 +20,17 @@ type Recognition = {
 
 const recognitionOf = () => (window as unknown as { SpeechRecognition?: new () => Recognition }).SpeechRecognition;
 
-export function Mic({ onText }: { onText: (text: string) => void }) {
+// `onState`: told each time it starts listening, is asked to stop, and has
+// stopped, so the message box can hold Send until the last words are in
+// (micHolds in bots.ts).
+export function Mic({ onText, onState }: { onText: (text: string) => void; onState?: (state: MicState) => void }) {
   const [can, setCan] = useState(false);
-  const [listening, setListening] = useState(false);
+  const [state, setState] = useState<MicState>('idle');
+  const listening = state !== 'idle';
+  const tell = (next: MicState) => {
+    setState(next);
+    onState?.(next);
+  };
   const [failed, setFailed] = useState('');
   const live = useRef<Recognition | null>(null);
   const lang = navigator.language || 'en-US';
@@ -33,6 +41,7 @@ export function Mic({ onText }: { onText: (text: string) => void }) {
     return () => {
       current = false;
       live.current?.abort();
+      onState?.('idle');
     };
   }, [lang]);
 
@@ -40,6 +49,8 @@ export function Mic({ onText }: { onText: (text: string) => void }) {
 
   const toggle = () => {
     if (live.current) {
+      // Its last words come before `end`, which is when Send is let go.
+      tell('stopping');
       live.current.stop();
       return;
     }
@@ -59,23 +70,23 @@ export function Mic({ onText }: { onText: (text: string) => void }) {
     r.onerror = (e) => setFailed(e.error === 'not-allowed' ? 'The microphone isn’t allowed for this site' : 'Dictation stopped');
     r.onend = () => {
       live.current = null;
-      setListening(false);
+      tell('idle');
     };
     live.current = r;
     setFailed('');
-    setListening(true);
+    tell('listening');
     try {
       r.start();
     } catch {
       live.current = null;
-      setListening(false);
+      tell('idle');
       setFailed('Dictation couldn’t start');
     }
   };
 
-  const words = failed || (listening ? 'Stop dictating' : 'Dictate (stays on this device)');
+  const words = failed || (state === 'stopping' ? 'Finishing' : listening ? 'Stop dictating to send' : 'Dictate (stays on this device)');
   return (
-    <button type="button" className={`bots-mic ${listening ? 'on' : ''}`} aria-pressed={listening} aria-label={words} title={words} onClick={toggle}>
+    <button type="button" className={`bots-mic ${listening ? 'on' : ''}`} aria-pressed={listening} aria-label={words} title={words} disabled={state === 'stopping'} onClick={toggle}>
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="6" y="1.8" width="4" height="7.5" rx="2" />
         <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.2" />

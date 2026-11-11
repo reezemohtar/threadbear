@@ -30,6 +30,9 @@
   --b-shadow: 0 2px 8px -1px light-dark(rgba(0, 0, 0, 0.05), transparent), 0 1px 2px light-dark(rgba(0, 0, 0, 0.03), transparent);
   --b-black: light-dark(#1c1c1c, #f5f5f5);
   --b-black-mark: light-dark(#ffffff, #161616);
+  /* A black bot's visor and eyes: light on its dark head, and the other way once the head is light. */
+  --b-visor: light-dark(#f2f2f2, #16181d);
+  --b-eye: light-dark(#111111, #ffffff);
   /* The site's own names, so the rail and the thread view inside the page
      take the same greys. */
   --bg: var(--b-pane);
@@ -218,6 +221,8 @@
 
 /* ---- a card, in the conversation */
 .bots-main .card-slot:empty { display: none; }
+/* Clear of the message box under it, whatever the card's height. */
+.bots-main .card-slot { padding-bottom: 12px; scroll-margin-bottom: 12px; }
 .bots-main .card-slot .card { width: min(100%, 560px); max-height: none; padding: 16px; gap: 8px; border: 0.5px solid var(--b-b2); border-radius: 20px; background: var(--b-elev); box-shadow: var(--b-shadow); }
 .bots-main .card-slot .card > h2:first-child, .bots-main .card-slot .card-label { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--b-t1); }
 .bots-main .card-slot .card-label + h2, .bots-main .card-slot .ask-q { font-size: 15px; line-height: 22px; font-weight: 600; }
@@ -230,7 +235,7 @@
 .bots-main .card-slot .ask-links { justify-content: flex-end; margin-top: 4px; }
 .bots-main .card-slot .ask-links .btn { height: 36px; padding: 0 14px; border: 0; border-radius: 99px; background: var(--b-fill2); font-size: 14px; font-weight: 500; }
 .bots-main .card-slot .ask-links .btn:hover:not(:disabled) { background: var(--b-active); }
-.bots-main .card-slot .ask-links .btn.primary { order: 2; background: var(--bc); color: var(--onbc); }
+.bots-main .card-slot .ask-links .btn.primary { background: var(--bc); color: var(--onbc); }
 
 /* ---- the message box: one pill, 22 round, 18 once it has grown */
 .bots-main .box.asking { border-color: var(--b-b2); border-radius: 22px; }

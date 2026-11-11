@@ -1,6 +1,6 @@
 // What the mock backend (convex-react.tsx) answers with: a handful of
 // made-up bots and their chats. Nothing here is anyone's real project,
-// thread or name. The ids are picked so the bots get a spread of shapes and
+// thread or name. The ids were picked for a spread of looks, and still give a spread of
 // colours (lookOf in src/bots.ts).
 const NOW = Date.now();
 const MIN = 60_000;
@@ -113,11 +113,12 @@ const chatOf = (threadId: string): Message[] => {
 
 // Made-up pictures for the Library: plain coloured squares, drawn here.
 const square = (colour: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="10" fill="${colour}"/></svg>`)}`;
+// On Nova's chat only, off the main demo chats: enough to exercise pictures in a
+// reply and the Library's Media list.
 const pictures: Record<string, { seq: number; url: string; pinned?: boolean }[]> = {
-  'thread-1': [
-    { seq: 2, url: square('#1680f3') },
-    { seq: 4, url: square('#10ab61'), pinned: true },
-    { seq: 6, url: square('#ee620d') },
+  'thread-7': [
+    { seq: 2, url: square('#7d7d82') },
+    { seq: 2, url: square('#9d6937'), pinned: true },
   ],
 };
 
