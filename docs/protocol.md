@@ -6454,8 +6454,10 @@ With the experiment off, or no bot listed, nothing is recorded, no bots
 file is read or written and threads behave as without it: a Full access
 thread's `threads.create` reaches the runner exactly as it was sent. What
 the code still does while off: one `stat` of `runner.json` when a thread is
-made, deleted or ends a turn (and a read of it when it has changed);
-`bots.*` is refused to thread keys, and `bots.list` answers the owner
+made, deleted or ends a turn (and a read of it when it has changed); one
+synchronous read of `runner.json` each time a Full access thread makes a
+thread, as the gate asks whether the experiment is on; `bots.*` is refused
+to thread keys, and `bots.list` answers the owner
 `{ on: false, ... }`; the module is started and stopped with the runner,
 doing nothing. With it on, a Full access thread's create shows as started
 by that thread whatever it sent (one that left `startedBy` out, or said
