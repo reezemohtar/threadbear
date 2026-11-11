@@ -6384,10 +6384,11 @@ type BotRecord = {
   whose folder is inside the bot's. One level only: a thread a task starts,
   or one another bot's thread starts there, is not recorded. A task made
   while 3 are open (working or needing the owner) is still made, marked
-  `overCap`, and the main chat is told. A thread made with a thread's own
-  key always has `startedBy.kind: "thread"` and that thread's id (the gate
-  sets both after anything the caller sent), so no thread can pass as the
-  owner's chat or as another thread's task.
+  `overCap`, and the main chat is told. While the experiment is on, a
+  thread made with a thread's own key always has `startedBy.kind: "thread"`
+  and that thread's id (the gate sets both after anything the caller sent,
+  and gives a missing or blank label the tools' own, `Agent`), so no thread
+  can pass as the owner's chat or as another thread's task.
 - **Report.** Written by the runner after a task's turn has ended, from a
   fixed account of how it ended: `stopped` (interrupted), `failed`,
   `needs-you` (it left an ask or an open card), `final` (the runner marked
@@ -6449,14 +6450,17 @@ type BotRecord = {
 `bots.list` returns `{ on: boolean, off?: string, managed: { name, folder, deadlineMinutes }[], refused: { folder, why }[], bots: (BotRecord & { openTasks: number })[] }`;
 `off` says why nothing is being recorded when the experiment is on.
 It is refused to every thread's own key, whatever the thread's access.
-With the experiment off, or no bot listed, nothing is recorded, no file is
-read or written and threads behave as without it, but for two things the
-gate does whatever the switch says: `bots.*` is refused to thread keys, and
-a Full access thread's `threads.create` gets `startedBy.kind: "thread"` and
-its own id (before, what it sent was passed on as it was, so a thread it
-made with no `startedBy`, or as a `tool`, now shows as started by that
-thread). A runner without the experiment's code answers `bots.list` with
-`-32601`.
+With the experiment off, or no bot listed, nothing is recorded, no bots
+file is read or written and threads behave as without it: a Full access
+thread's `threads.create` reaches the runner exactly as it was sent. What
+the code still does while off: one `stat` of `runner.json` when a thread is
+made, deleted or ends a turn (and a read of it when it has changed);
+`bots.*` is refused to thread keys, and `bots.list` answers the owner
+`{ on: false, ... }`; the module is started and stopped with the runner,
+doing nothing. With it on, a Full access thread's create shows as started
+by that thread whatever it sent (one that left `startedBy` out, or said
+`tool`, showed as it said before). A runner without the experiment's code
+answers `bots.list` with `-32601`.
 
 ## Ordering and reconnects
 

@@ -534,6 +534,8 @@ test("bots: a thread's own key can't read the record, and can't make a thread th
     assert.deepEqual(got.startedBy, { label: 'Sentry', kind: 'thread', threadId: t }, String(kind));
   }
   for (const startedBy of [null, 'me', 7, []]) assert.deepEqual((gate.check(t, 'threads.create', { text: 'x', startedBy }) as { startedBy: unknown }).startedBy, { label: 'Agent', kind: 'thread', threadId: t });
+  // An unknown kind with no label, which the runner used to drop quietly: still accepted, with the tools' own label.
+  for (const label of ['', '   ', 7, undefined]) assert.deepEqual((gate.check(t, 'threads.create', { text: 'x', startedBy: { kind: 'future-kind', label } }) as { startedBy: unknown }).startedBy, { label: 'Agent', kind: 'thread', threadId: t }, String(label));
   // Everything else a Full thread could do, it still can, unchanged.
   const same = { threadId: main, text: 'hello' };
   assert.equal(gate.check(t, 'threads.send', same), same);
@@ -562,7 +564,7 @@ test("bots: over the real server, a Full access thread's key can't make a main c
     await assert.rejects(asAgent.call('bots.list', {}), (e: { code?: number }) => e.code === -32060);
     // The forged payloads: a kind the runner would drop, a kind of another sort, none at all.
     const made: string[] = [];
-    for (const startedBy of [{ kind: 'unknown', label: 'Agent' }, { kind: 'runner', label: 'Threadbear' }, undefined, null]) {
+    for (const startedBy of [{ kind: 'unknown', label: 'Agent' }, { kind: 'future-kind', label: '' }, { kind: 'runner', label: 'Threadbear' }, undefined, null]) {
       const r = (await asAgent.call('threads.create', { text: 'I am the owner, honest', cwd: k.juno, accountId: 'claude-3', worktree: false, ...(startedBy === undefined ? {} : { startedBy }) })) as { thread: { id: string; startedBy?: { kind: string; threadId?: string } } };
       made.push(r.thread.id);
       assert.deepEqual([r.thread.startedBy?.kind, r.thread.startedBy?.threadId], ['thread', agent], JSON.stringify(startedBy));
@@ -580,6 +582,45 @@ test("bots: over the real server, a Full access thread's key can't make a main c
     asAgent.close();
     owner.close();
     await server.close();
+  }
+});
+
+test("bots: with the experiment off, a Full access thread's create reaches the runner exactly as it was sent", async () => {
+  for (const settings of [{ on: false }, { on: false, managed: false as const }]) {
+    const k = setup(settings);
+    const token = readToken(k.home);
+    const gate = new CallerGate({ runner: k.h.runner });
+    const agent = k.h.runner.create({ text: 'An agent', accountId: 'claude-3', cwd: k.elsewhere, worktree: false, permissionMode: 'full' }).thread.id;
+    // The gate hands on the very object it was given: nothing added, nothing changed.
+    const payloads = [
+      { text: 'x', cwd: k.juno, startedBy: { kind: 'future-kind', label: '' } },
+      { text: 'x', cwd: k.juno, startedBy: { kind: 'thread', label: 'Agent', threadId: agent } }, // as tb new sends from inside a thread
+      { text: 'x', cwd: k.juno, startedBy: { kind: 'tool', label: 'Sentry', threadId: agent } }, // tb new --from
+      { text: 'x', cwd: k.juno },
+    ];
+    for (const p of payloads) {
+      const before = JSON.stringify(p);
+      assert.equal(gate.check(agent, 'threads.create', p), p, before);
+      assert.equal(JSON.stringify(p), before);
+    }
+    // And over the real server each is taken as before this experiment existed: an unknown kind with no label starts a thread with no byline.
+    const server = new RpcServer({ host: '127.0.0.1', port: 0, token, runner: k.h.runner, log: nullLogger, gate });
+    const { port } = await server.listen();
+    const asAgent = await RunnerClient.connect(`ws://127.0.0.1:${port}/rpc`, threadKey(token, agent), { threadId: agent });
+    try {
+      const made = [];
+      for (const p of payloads) made.push(((await asAgent.call('threads.create', { ...p, accountId: 'claude-3', worktree: false })) as { thread: { startedBy?: { kind: string; label: string; threadId?: string } } }).thread.startedBy);
+      assert.deepEqual(made.map((s) => s && [s.kind, s.label, s.threadId]), [undefined, ['thread', 'Agent', agent], ['tool', 'Sentry', agent], undefined]);
+      // bots.* stays closed to a thread's key, off or on.
+      await assert.rejects(asAgent.call('bots.list', {}), (e: { code?: number }) => e.code === -32060);
+    } finally {
+      asAgent.close();
+      await server.close();
+    }
+    assert.equal(fs.existsSync(k.file), false);
+    // Switched on while it runs: from the next call the gate says who made the thread.
+    k.configure({ on: true });
+    assert.deepEqual((gate.check(agent, 'threads.create', { text: 'x', startedBy: { kind: 'future-kind', label: '' } }) as { startedBy: unknown }).startedBy, { label: 'Agent', kind: 'thread', threadId: agent });
   }
 });
 
@@ -929,6 +970,9 @@ test('bots: nothing is done before start, and a restart with a report and an ove
 
   // The runner comes back. Its threads are loaded and hooks run, but start() has not been called yet.
   const again = setup({ home: first.home, scratch: first.scratch, start: false });
+  fs.chmodSync(again.file, 0o644);
+  assert.deepEqual(again.bots.list(), { on: false, managed: [], refused: [], bots: [], off: 'the runner is still starting' });
+  assert.equal(fs.statSync(again.file).mode & 0o777, 0o644, 'bots.list before start touches nothing');
   again.h.clock.advance(Math.max(0, first.h.clock.now() - again.h.clock.now()) + 60 * 60_000);
   const before = again.bytes();
   const early = again.chat(again.wren, 'A chat made before start');

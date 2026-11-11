@@ -561,6 +561,15 @@ export class Bots {
     });
   }
 
+  /** Whether the experiment is switched on now, for the caller gate (rpc-gate.ts). Reads nothing but runner.json's settings, and can't throw. */
+  on(): boolean {
+    try {
+      return this.current().on;
+    } catch {
+      return false;
+    }
+  }
+
   /** For good: a runner that is stopping, or handing over to a new one, writes and tells nothing more. */
   stop(): void {
     this.stopped = true;
@@ -752,6 +761,8 @@ export class Bots {
    */
   list(): BotsList {
     const none: BotsList = { on: false, managed: [], refused: [], bots: [] };
+    // Before start nothing is loaded, moved or made private, by this way in either.
+    if (!this.started) return { ...none, off: 'the runner is still starting' };
     this.enter('listing', () => {});
     try {
       if (this.broken) return { ...none, off: this.broken };

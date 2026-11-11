@@ -60,6 +60,7 @@ export type CallerGateDeps = {
     get(threadId: string): ThreadLike;
     accessOf(threadId: string): PermissionMode;
     confinedOf(threadId: string): boolean;
+    bots?: { on(): boolean };
   };
   // Threads a draining runner still has (rpc.ts's RemoteThreads).
   remote?: { owns(threadId: string): boolean; summaries(include: ('inbox' | 'snoozed' | 'archived')[]): (ThreadLike & { id: string })[] };
@@ -118,10 +119,10 @@ export class CallerGate {
   // mode filled in, what only a client with the token may say taken out).
   check(threadId: string, method: string, p: Params): Params {
     const caller = this.authority(threadId);
-    // Bots (bots.ts, a fork's experiment): its record is closed to every thread's key, whatever the thread's access, and a
-    // thread made with a key always says which thread made it, so none can pass as the owner's own chat or as another's task.
+    // Bots (bots.ts, a fork's experiment): its record is closed to every thread's key, whatever the thread's access, and while
+    // it is on a thread made with a key always says which thread made it, so none can pass as the owner's chat or another's task.
     if (method.startsWith('bots.')) throw new RpcError(ErrorCode.notAllowed, "The bots record isn't open to a thread's own key.");
-    if (method === 'threads.create' && caller.mode === 'full' && !caller.confined) return { ...p, startedBy: { label: 'Agent', ...(p.startedBy && typeof p.startedBy === 'object' ? (p.startedBy as Params) : {}), kind: 'thread', threadId } };
+    if (method === 'threads.create' && caller.mode === 'full' && !caller.confined && this.deps.runner.bots?.on()) return { ...p, startedBy: { ...(p.startedBy && typeof p.startedBy === 'object' ? (p.startedBy as Params) : {}), label: typeof (p.startedBy as Params | null)?.label === 'string' && ((p.startedBy as Params).label as string).trim() ? (p.startedBy as Params).label : 'Agent', kind: 'thread', threadId } };
     if (caller.mode === 'full' && !caller.confined) return p;
     if (GATED_READS.has(method)) return p;
     const who = caller.confined ? 'This thread runs in a sandbox' : `This thread is on ${MODE_NAMES[caller.mode]}`;
