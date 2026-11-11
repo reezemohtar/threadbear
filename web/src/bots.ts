@@ -246,24 +246,32 @@ export function tasksShown<T extends BotThread>(tasks: T[], cap: number): { rows
 /** Really working: a turn is running, whatever else the row says. */
 export const isBusy = (t: { status: string }) => busy(t);
 
-// How long a Stop waits to be seen to have worked before it says it isn't
-// confirmed and can be pressed again.
+// How long a Stop waits to be seen to have worked before the page says it's
+// queued (and, once its command is done, how long a thread may still read as
+// working before that counts as a new turn).
 export const STOP_WAIT_MS = 20_000;
-export type StopPhase = 'idle' | 'stopping' | 'unconfirmed' | 'failed';
+export type StopPhase = 'idle' | 'stopping' | 'queued' | 'failed';
+type StopEntry<C> = { at: number; commandId?: C; state?: string; doneAt?: number; error?: string };
 
 /**
- * The Stops that have been pressed and not yet seen to work, by thread. It
- * lives outside any component, so leaving a tab or opening another chat
- * doesn't forget one. A press while one is `stopping` does nothing, so Stop
- * pressed twice sends one stop. It's let go only when the thread is seen to
- * be no longer working (`saw` with busy false), never because the row says
- * something else as well. Sending it is not the end: the stop is a command
- * the Mac has still to take, so its command is watched (`saw` with the
- * command's state), a refusal is `failed`, and one that nothing has
- * confirmed after STOP_WAIT_MS is `unconfirmed`. Both can be pressed again.
+ * The Stops that have been pressed and are not yet over, by thread. One
+ * store for the page, so every Stop button for a thread (its row in Tasks,
+ * its own message box) is the same Stop, and leaving a tab doesn't forget
+ * one.
+ *
+ * A stop is a command the Mac takes when it can, and it stops whatever turn
+ * the thread is on when it lands. So there is never a second one while the
+ * first is still on its way: it could land after the first has worked and a
+ * new turn has begun, and stop that one. `press` does nothing while one is
+ * `stopping` or `queued` (not confirmed after STOP_WAIT_MS: it will apply
+ * when the Mac is back). A new Stop is allowed only once the first is over:
+ * it failed, or its command is done and the thread has been seen stopped,
+ * or seen still working long enough after that to be a new turn.
+ * A thread missing from the lists is not known to have stopped (`busy`
+ * undefined): only a row saying so lets go.
  */
 export function makeStops<C = string>() {
-  const entries = new Map<string, { at: number; commandId?: C; error?: string }>();
+  const entries = new Map<string, StopEntry<C>>();
   const listeners = new Set<() => void>();
   let version = 0;
   const changed = () => {
@@ -274,14 +282,15 @@ export function makeStops<C = string>() {
     const e = entries.get(threadId);
     if (!e) return 'idle';
     if (e.error !== undefined) return 'failed';
-    return now - e.at >= STOP_WAIT_MS ? 'unconfirmed' : 'stopping';
+    return now - e.at >= STOP_WAIT_MS && e.state !== 'done' ? 'queued' : 'stopping';
   };
   return {
     phase,
     error: (threadId: string) => entries.get(threadId)?.error,
     async press(threadId: string, run: (threadId: string) => Promise<C>, now: number): Promise<'sent' | 'ignored' | 'failed'> {
-      if (phase(threadId, now) === 'stopping') return 'ignored';
-      const mine: { at: number; commandId?: C; error?: string } = { at: now };
+      const was = phase(threadId, now);
+      if (was === 'stopping' || was === 'queued') return 'ignored';
+      const mine: StopEntry<C> = { at: now };
       entries.set(threadId, mine);
       changed();
       try {
@@ -299,25 +308,71 @@ export function makeStops<C = string>() {
         return 'failed';
       }
     },
-    /** What's been seen since: whether the thread is still working, and its stop command's state. */
-    saw(threadId: string, seen: { busy?: boolean; command?: { state: string; note?: string } }) {
+    /** What's been seen since: whether the thread is working (undefined: not known), and its stop command's state. */
+    saw(threadId: string, seen: { busy?: boolean; command?: { state: string; note?: string } }, now: number) {
       const e = entries.get(threadId);
-      if (!e) return;
-      if (seen.busy === false) {
-        entries.delete(threadId);
+      if (!e || e.error !== undefined) return;
+      const before = `${e.state} ${e.doneAt}`;
+      if (seen.command) e.state = seen.command.state;
+      if (e.state === 'failed') {
+        e.error = seen.command?.note || 'the Mac could not stop it';
         changed();
-      } else if (seen.command?.state === 'failed' && e.error === undefined) {
-        e.error = seen.command.note || 'the Mac could not stop it';
-        changed();
+        return;
       }
+      if (e.state === 'done') {
+        e.doneAt ??= now;
+        // Over: the thread has stopped, or is working again on what must be a new turn.
+        if (seen.busy === false || (seen.busy === true && now - e.doneAt >= STOP_WAIT_MS)) {
+          entries.delete(threadId);
+          changed();
+          return;
+        }
+      }
+      if (before !== `${e.state} ${e.doneAt}`) changed();
     },
-    pending: () => [...entries].map(([threadId, e]) => ({ threadId, commandId: e.commandId })),
+    pending: () => [...entries].map(([threadId, e]) => ({ threadId, commandId: e.commandId, failed: e.error !== undefined })),
+    /** Another sign-in: nothing of the last one's is kept. */
+    clear() {
+      if (!entries.size) return;
+      entries.clear();
+      changed();
+    },
     subscribe(l: () => void) {
       listeners.add(l);
       return () => void listeners.delete(l);
     },
     version: () => version,
   };
+}
+
+/**
+ * What's typed and not sent, by thread, kept by the page while it's loaded:
+ * a draft is still there after a look at a task or another chat, and after
+ * the thread drops out of the lists for a moment. Sending clears the box,
+ * which clears the draft.
+ */
+export function makeDrafts() {
+  const drafts = new Map<string, string>();
+  return {
+    get: (threadId: string) => drafts.get(threadId) ?? '',
+    set(threadId: string, text: string) {
+      if (text) drafts.set(threadId, text);
+      else drafts.delete(threadId);
+    },
+    clear: () => drafts.clear(),
+    size: () => drafts.size,
+  };
+}
+
+/**
+ * Whether the chat that was open has really gone, from its own row read
+ * directly (undefined: not read yet; null: no such thread). The lists can
+ * miss a thread for a moment while it moves between them, so the notice
+ * waits for this: `checking` and `still` keep the chat and its message box.
+ */
+export function goneConfirmed(bot: BotKey, row: BotThread | null | undefined): 'checking' | 'still' | 'gone' {
+  if (row === undefined) return 'checking';
+  return row && isLive(row) && !isTask(row) && belongs(bot, row) ? 'still' : 'gone';
 }
 
 /**

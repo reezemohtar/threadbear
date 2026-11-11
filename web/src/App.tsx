@@ -174,8 +174,16 @@ function Empty({ text }: { text: string }) {
 // new day, the bot's name in the message box, and anything of its own beside
 // Send (`tools`, handed a way to add text to what's typed, and to hold Send
 // while more text is on its way). Nothing else passes it, so every other
-// thread looks as it did.
-export type ChatLook = { name: string; tools?: (box: { add: (text: string) => void; hold: (held: boolean) => void }) => ReactNode };
+// thread looks as it did. `draft`: what was typed and not sent, kept by the
+// page so it's there again after a look at another chat. `stop`: the page's
+// own Stop for this thread, shared with its other Stop buttons, in place of
+// the message box's.
+export type ChatLook = {
+  name: string;
+  tools?: (box: { add: (text: string) => void; hold: (held: boolean) => void }) => ReactNode;
+  draft?: { text: string; set: (text: string) => void };
+  stop?: { pending: boolean; press: () => void };
+};
 
 // `back`: where the back button goes, for a thread open inside another page.
 function ThreadView({ token, threadId, back = '/', chat }: { token: string; threadId: string; back?: string; chat?: ChatLook }) {
@@ -420,7 +428,9 @@ function RecapBox({ thread: t }: { thread: Row }) {
 function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: { token: string; thread: Row; lastSeq?: number; onSent: (id: Id<'commands'>) => void; onArchive: () => void; chat?: ChatLook; cardSlot?: HTMLElement | null }) {
   const send = useMutation(api.phone.send);
   const interrupt = useMutation(api.phone.interrupt);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => chat?.draft?.text ?? '');
+  // A chat's page keeps what's typed (ChatLook.draft). Nothing happens without it.
+  useEffect(() => chat?.draft?.set(text), [text]);
   // Stop pressed: a spinner in its place until the turn has stopped (or the
   // press failed), so it can't be pressed twice meanwhile.
   const [stopping, setStopping] = useState(false);
@@ -567,12 +577,12 @@ function Dock({ token, thread: t, lastSeq, onSent, onArchive, chat, cardSlot }: 
             // Stop only while nothing's typed, as on the Mac: a message
             // typed during a turn goes into it. (And in a chat while the mic
             // holds Send, so the turn can still be stopped: sendOrStop.)
-            stopping ? (
+            (chat?.stop ? chat.stop.pending : stopping) ? (
               <button type="button" className="send" disabled aria-label="Stopping" title="Stopping">
                 <span className="spinner" />
               </button>
             ) : (
-              <button type="button" className="send" onClick={() => void stop()} aria-label="Stop" title="Stop">
+              <button type="button" className="send" onClick={() => (chat?.stop ? chat.stop.press() : void stop())} aria-label="Stop" title="Stop">
                 <Icon.Stop />
               </button>
             )

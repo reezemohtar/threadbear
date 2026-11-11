@@ -14,7 +14,7 @@ import { useInbox } from './inbox';
 import { CommandState } from './command-state';
 import { go } from './route';
 import { ago } from './format';
-import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatState, COLORS, isBusy, isLive, isTask, libraryChips, libraryOf, liveOf, makeStops, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, tasksShown, taskState, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
+import { allBots, botFolder, botPath, BOTS_FOLDED_KEY, buildBots, chatState, COLORS, goneConfirmed, makeDrafts, isBusy, isLive, isTask, libraryChips, libraryOf, liveOf, makeStops, matchBots, micHolds, namedChat, readBotId, readFoldedBots, singleFlight, slimProject, startFolder, tasksOf, tasksShown, taskState, threadsOf, toggleFolded, watchKeys, type Bot, type BotProject, type BotThread, type LibraryChip, type Section } from './bots';
 import { Mic } from './bots-mic';
 import type { ChatLook } from './App';
 import { projectLoader } from './bots-loader';
@@ -28,6 +28,8 @@ const FINISHED = 5;
 // Stops pressed and not yet seen to work, kept for as long as the page is
 // loaded: leaving the tab or the pane doesn't forget one (makeStops).
 const stops = makeStops<Id<'commands'>>();
+// What's typed and not sent, by thread (makeDrafts).
+const drafts = makeDrafts();
 const TAB_KEY = 'threadbear.botsPaneTab';
 // How many of a bot's chats the details pane lists.
 const RECENT = 12;
@@ -170,7 +172,21 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
   // other chat is opened in its place: the page says so and waits to be told
   // (chatState's `gone`), so what's typed never goes somewhere unannounced.
   const chat = bot ? chatState(bot, threads, held.bot === bot.id ? held.thread : undefined) : ({ kind: 'none' } as const);
-  const newest = chat.kind === 'open' ? chat.threadId : undefined;
+  // The lists can miss a thread for a moment, so `gone` is believed only once
+  // the thread's own row says so (goneConfirmed). Until then the chat stays.
+  const wasRow = useRow(token, chat.kind === 'gone' ? chat.was : undefined);
+  const gone = bot && chat.kind === 'gone' ? goneConfirmed(bot, wasRow) : 'still';
+  const newest = chat.kind === 'open' ? chat.threadId : chat.kind === 'gone' && gone !== 'gone' ? chat.was : undefined;
+  const interrupt = useMutation(api.phone.interrupt);
+  // The Stops and drafts are this sign-in's: another starts with none.
+  useEffect(
+    () => () => {
+      stops.clear();
+      drafts.clear();
+    },
+    [token],
+  );
+  useStops();
   useEffect(() => {
     if (!bot?.id) return;
     if (chat.kind === 'open' && (held.bot !== bot.id || held.thread !== chat.threadId)) setHeld({ bot: bot.id, thread: chat.threadId });
@@ -184,18 +200,14 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
   // bot's name. Asked for with useQueries, which hands back an error (no such
   // thread) rather than throwing it.
   const listed = asked ? threads.find((t) => t.threadId === asked) : undefined;
-  const lookFor = asked && ready && !listed ? asked : undefined;
-  const looking = useMemo<Record<string, { query: typeof api.phone.threadRow; args: { token: string; threadId: string } }>>(() => {
-    const out: Record<string, { query: typeof api.phone.threadRow; args: { token: string; threadId: string } }> = {};
-    if (lookFor) out.row = { query: api.phone.threadRow, args: { token, threadId: lookFor } };
-    return out;
-  }, [lookFor, token]);
-  const looked = (useQueries(looking) as { row?: ThreadRow | Error }).row;
+  const looked = useRow(token, asked && ready && !listed ? asked : undefined);
   // Undefined: not known yet. Null: no such thread.
-  const askedRow = !asked ? undefined : (listed ?? (looked instanceof Error ? null : looked));
+  const askedRow = !asked ? undefined : (listed ?? looked);
   const named = bot && asked ? namedChat(bot, askedRow) : 'checking';
   const open = asked ? (named === 'ok' ? asked : undefined) : newest;
-  const openRow = asked ? (open ? (askedRow ?? undefined) : undefined) : threads.find((t) => t.threadId === open);
+  const openRow = asked ? (open ? (askedRow ?? undefined) : undefined) : (threads.find((t) => t.threadId === open) ?? wasRow ?? undefined);
+  // What's on screen: the chat named in the address, else the bot's own.
+  const onScreen = asked ? open : newest;
 
   // A task, opened by name from the Tasks list: said in the pill, with a way
   // back to the main chat.
@@ -327,24 +339,22 @@ export function BotsPage({ token, id, thread }: { token: string; id?: string; th
               Main chat
             </a>
           ) : null}
-          {/* The bot's own chat stays in place, out of sight, while a task or another of its chats
-              is open over it, so what was being typed there is still there on the way back. */}
-          {newest ? (
-            <div className={`bots-view ${asked && asked !== newest ? 'away' : ''}`} inert={asked && asked !== newest ? true : undefined}>
-              {thread(newest, botPath(), { name: bot.title, tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })}
-            </div>
-          ) : null}
-          {asked && asked !== newest ? (
-            open ? (
-              <div className="bots-view">{thread(open, botPath(), { name: openTask ? 'this task' : 'this chat', tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} /> })}</div>
-            ) : (
-              <NotItsChat bot={bot} checking={named === 'checking'} />
-            )
-          ) : chat.kind === 'gone' ? (
+          {onScreen ? (
+            thread(onScreen, botPath(), {
+              name: openTask ? 'this task' : asked && asked !== newest ? 'this chat' : bot.title,
+              tools: ({ add, hold }) => <Mic onText={add} onState={(state) => hold(micHolds(state))} />,
+              // What's typed is the page's to keep, by thread, so it's there again after a look elsewhere.
+              draft: { text: drafts.get(onScreen), set: (text) => drafts.set(onScreen, text) },
+              // The same Stop as this thread's row in Tasks: one of them pressed is both pressed.
+              stop: { pending: ['stopping', 'queued'].includes(stops.phase(onScreen, Date.now())), press: () => void stops.press(onScreen, (threadId) => interrupt({ token, threadId }), Date.now()) },
+            })
+          ) : asked ? (
+            <NotItsChat bot={bot} checking={named === 'checking'} />
+          ) : chat.kind === 'gone' && gone === 'gone' ? (
             <ChatGone bot={bot} next={!!chat.next} go={() => setHeld({ bot: bot.id, thread: chat.next })} />
-          ) : !newest ? (
+          ) : (
             <NoChat key={bot.id} token={token} bot={bot} live={live} recheck={recheck} tasks={liveTasks} />
-          ) : null}
+          )}
           <StopWatch token={token} threads={threads} ready={ready} />
         </section>
       ) : (
@@ -476,27 +486,54 @@ function ChatGone({ bot, next, go }: { bot: Bot; next: boolean; go: () => void }
   );
 }
 
+// One thread's row, read directly and watched: for a thread the lists don't
+// have (archived, or missing for a moment). Undefined: not known yet. Null:
+// no such thread. Asked for with useQueries, which hands back an error
+// rather than throwing it.
+function useRow(token: string, threadId: string | undefined): (BotThread & { title: string }) | null | undefined {
+  const asks = useMemo(() => {
+    const out: Record<string, { query: typeof api.phone.threadRow; args: { token: string; threadId: string } }> = {};
+    if (threadId) out.row = { query: api.phone.threadRow, args: { token, threadId } };
+    return out;
+  }, [threadId, token]);
+  const row = (useQueries(asks) as { row?: (BotThread & { title: string }) | Error }).row;
+  return !threadId ? undefined : row instanceof Error ? null : row;
+}
+
 // Follows each pending Stop to its end: its command (taken, done or failed)
 // and whether its thread is still working. It sits in the page, not the
 // pane, so it's there whichever tab is showing.
 function StopWatch({ token, threads, ready }: { token: string; threads: (BotThread & { title: string })[]; ready: boolean }) {
   const key = useStops();
+  const here = new Set(threads.map((t) => t.threadId));
+  // A pending Stop's thread that the lists don't have is looked up itself:
+  // missing is not the same as stopped.
+  const missing = ready
+    ? stops
+        .pending()
+        .filter((p) => !here.has(p.threadId))
+        .map((p) => p.threadId)
+        .join(' ')
+    : '';
   const asks = useMemo(() => {
-    const out: Record<string, { query: typeof api.phone.command; args: { token: string; commandId: Id<'commands'> } }> = {};
-    for (const p of stops.pending()) if (p.commandId) out[p.threadId] = { query: api.phone.command, args: { token, commandId: p.commandId } };
+    const out: Record<string, { query: typeof api.phone.command | typeof api.phone.threadRow; args: Record<string, unknown> }> = {};
+    for (const p of stops.pending()) if (p.commandId && !p.failed) out[`c ${p.threadId}`] = { query: api.phone.command, args: { token, commandId: p.commandId } };
+    for (const threadId of missing ? missing.split(' ') : []) out[`r ${threadId}`] = { query: api.phone.threadRow, args: { token, threadId } };
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, token]);
-  const commands = useQueries(asks) as Record<string, { state: string; note?: string } | Error | undefined>;
+  }, [key, missing, token]);
+  const answers = useQueries(asks as never) as Record<string, unknown>;
   useEffect(() => {
     if (!ready) return;
     for (const p of stops.pending()) {
-      const row = threads.find((t) => t.threadId === p.threadId);
-      const command = commands[p.threadId];
-      // Not among the open threads any more: it isn't working.
-      stops.saw(p.threadId, { busy: row ? isBusy(row) : false, ...(command && !(command instanceof Error) ? { command } : {}) });
+      const listed = threads.find((t) => t.threadId === p.threadId);
+      const looked = answers[`r ${p.threadId}`];
+      // Working or not, from its row. No row to go on yet: not known. No such thread: it isn't working.
+      const busy = listed ? isBusy(listed) : looked instanceof Error ? false : looked ? isBusy(looked as { status: string }) : undefined;
+      const command = answers[`c ${p.threadId}`];
+      stops.saw(p.threadId, { ...(busy !== undefined ? { busy } : {}), ...(command && !(command instanceof Error) ? { command: command as { state: string; note?: string } } : {}) }, Date.now());
     }
-  }, [threads, commands, ready, key]);
+  });
   return null;
 }
 
@@ -507,14 +544,16 @@ function useStops(): string {
   useSyncExternalStore(stops.subscribe, stops.version);
   const key = stops
     .pending()
-    .map((p) => `${p.threadId}=${p.commandId ?? ''}`)
+    .map((p) => `${p.threadId}=${p.commandId ?? ''}${p.failed ? '!' : ''}`)
     .join(' ');
+  // A failed one waits on a press, not on time.
+  const waiting = stops.pending().some((p) => !p.failed);
   const [, tick] = useState(0);
   useEffect(() => {
-    if (!key) return;
+    if (!waiting) return;
     const t = setInterval(() => tick((n) => n + 1), 2000);
     return () => clearInterval(t);
-  }, [key]);
+  }, [waiting]);
   return key;
 }
 
@@ -743,14 +782,14 @@ function Tasks({ token, bot, tasks, open }: { token: string; bot: Bot; tasks: (B
           const line =
             stopping === 'failed'
               ? `Couldn’t stop it: ${stops.error(t.threadId)}`
-              : stopping === 'unconfirmed'
-                ? 'Stop not confirmed yet. The Mac may be offline'
+              : stopping === 'queued'
+                ? 'Stop is queued. It applies when the Mac is back'
                 : stopping === 'stopping'
                   ? 'Stopping…'
                   : status === 'working'
                     ? t.working?.trim() || TASK_WORDS.working
                     : TASK_WORDS[status];
-          const words = stopping === 'stopping' ? 'Stopping' : stopping === 'idle' ? `Stop ${t.title || 'this task'}` : `Try to stop ${t.title || 'this task'} again`;
+          const words = stopping === 'failed' ? `Try to stop ${t.title || 'this task'} again` : `Stop ${t.title || 'this task'}`;
           return (
             <div key={t.threadId} className={`bots-task ${t.threadId === open ? 'on' : ''}`}>
               <a
@@ -767,13 +806,18 @@ function Tasks({ token, bot, tasks, open }: { token: string; bot: Bot; tasks: (B
                   <span className="bots-li-title">{t.title || 'Untitled'}</span>
                   <span className="bots-li-when">{ago(t.lastActivityMs)}</span>
                 </span>
-                <span className={`bots-task-line ${stopping === 'failed' || stopping === 'unconfirmed' ? 'needs' : status}`}>{line}</span>
+                <span className={`bots-task-line ${stopping === 'failed' || stopping === 'queued' ? 'needs' : status}`}>{line}</span>
               </a>
-              {status === 'working' ? (
-                <button className="bots-stop" disabled={stopping === 'stopping'} title={words} aria-label={words} onClick={() => void stops.press(t.threadId, (threadId) => interrupt({ token, threadId }), Date.now())}>
-                  {stopping === 'stopping' ? <span className="spinner" /> : <Icon.Stop />}
+              {/* No button while a Stop is on its way: a second one could stop the next turn. */}
+              {status !== 'working' ? null : stopping === 'stopping' || stopping === 'queued' ? (
+                <span className="bots-stop" role="img" aria-label={stopping === 'queued' ? 'Stop is queued' : 'Stopping'} title={stopping === 'queued' ? 'Stop is queued' : 'Stopping'}>
+                  <span className="spinner" />
+                </span>
+              ) : (
+                <button className="bots-stop" title={words} aria-label={words} onClick={() => void stops.press(t.threadId, (threadId) => interrupt({ token, threadId }), Date.now())}>
+                  <Icon.Stop />
                 </button>
-              ) : null}
+              )}
             </div>
           );
         })}

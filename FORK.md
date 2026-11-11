@@ -53,8 +53,13 @@ folding sections. Web only, still the `bots` experiment, off by default.
 
 Stage A, slice 1: a bot's background threads are listed as its Tasks, with
 Stop, and no longer take the place of its main chat. Web only, in the Bots
-files (`bots.ts`, `bots-page.tsx`, `bots.css`, the mock) and the docs. No
-existing file of Mike's was edited for it: `App.tsx` is untouched.
+files (`bots.ts`, `bots-page.tsx`, `bots.css`, the mock) and the docs.
+
+### Existing files edited
+
+| File | Change | Why |
+|---|---|---|
+| `web/src/App.tsx` | Two more optional fields on `ChatLook`, used only by the Bots page: `draft` and `stop`. In `Dock`: the text box starts from `chat?.draft?.text` (one changed line) and tells `chat?.draft?.set` when it changes (one added effect); the Stop button's spinner reads `chat.stop.pending` and its click calls `chat.stop.press()` when `chat.stop` is given (two changed lines). The type itself grew from one line to six with its comment. Without those fields every line behaves as before: the box starts empty, and Stop is the message box's own | A draft has to outlive the message box to survive a look at a task, and a thread's two Stop buttons (its row in Tasks, its own message box) have to be one Stop, or two stops can be sent |
 
 ## Fixes to Mike's code, until his release has them
 

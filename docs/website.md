@@ -166,7 +166,11 @@ agent started is one of the bot's tasks (`isTask`): tasks are listed in the
 pane with their state and a Stop, and are never the bot's chat. The chat a
 bot opens is its main chat (`mainChat`): of its open threads that aren't
 tasks, the starred one, else the oldest, which is the same on every reload
-(nothing is stored for it yet). Its threads are the
+(nothing is stored for it yet). A Stop is one per thread for the page
+(`makeStops`): its command is watched to its end, and no second one is
+sent while the first is on its way, as a late one would stop the next
+turn. What's typed and not sent is kept by thread (`makeDrafts`). Both
+reach the message box through `ChatLook`'s optional `draft` and `stop`. Its threads are the
 inbox's and the hibernating ones in the project, or in its folder on its
 own runner. A chat named in the address (`/bots/<project>~<thread>`) is
 shown only while it's that bot's (its row is watched). The chat is `ThreadView` from `App.tsx`, so

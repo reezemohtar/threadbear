@@ -1,7 +1,7 @@
 // node --test web/src/bots.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, mainChat, taskStatus, tasksOf, chatState, makeStops, STOP_WAIT_MS, tasksShown, taskState } from './bots.ts';
+import { allBots, belongs, canDictateHere, dayLine, isLoadFailure, libraryChips, libraryOf, matchBots, readFoldedBots, toggleFolded, liveOf, namedChat, slimProject, startFolder, watchKeys, botFolder, botPath, botsSwitch, buildBots, COLORS, singleFlight, lineOf, lookOf, newestLive, readBotId, roleOf, sectionOf, HEADS, TOPS, VISORS, statusOf, threadsOf, type BotProject, type BotThread, approvalOrder, followCard, micHolds, sendOrStop, botLine, isTask, mainChat, taskStatus, tasksOf, chatState, makeStops, STOP_WAIT_MS, tasksShown, taskState, goneConfirmed, makeDrafts } from './bots.ts';
 
 // Where a bot's chat ends up, as the page follows it once told to: for the older tests.
 const chatFor = (bot: Parameters<typeof chatState>[0], threads: BotThread[], held?: string) => {
@@ -483,58 +483,122 @@ test('only a working task can be stopped, and a stopped one reads as finished', 
   assert.equal(taskStatus(task({ status: 'idle' })), 'finished');
 });
 
-test('Stop pressed twice sends one stop, and is let go only when the task has really stopped', async () => {
+test('Stop pressed twice sends one stop, from whichever button', async () => {
   const stops = makeStops<string>();
   const sent: string[] = [];
   const run = async (id: string) => {
     sent.push(id);
     return `command-${sent.length}`;
   };
+  // The row's Stop, then the message box's Stop for the same thread: one store, one stop.
   const first = stops.press('t1', run, 1000);
   assert.equal(await stops.press('t1', run, 1001), 'ignored');
   assert.equal(await first, 'sent');
   assert.equal(await stops.press('t1', run, 1500), 'ignored', 'sent is not stopped: still held');
   assert.deepEqual(sent, ['t1']);
-  assert.deepEqual(stops.pending(), [{ threadId: 't1', commandId: 'command-1' }]);
-  // The row gains "needs you" while its turn is still running: not let go.
-  stops.saw('t1', { busy: true, command: { state: 'taken' } });
-  assert.equal(stops.phase('t1', 2000), 'stopping');
-  assert.equal(await stops.press('t1', run, 2000), 'ignored');
-  // Another task has its own.
+  assert.equal(stops.phase('t1', 1500), 'stopping');
+  // Another thread has its own.
   assert.equal(await stops.press('t2', run, 2000), 'sent');
-  // The thread is seen to have stopped: let go, and can be stopped again another time.
-  stops.saw('t1', { busy: false });
-  assert.equal(stops.phase('t1', 2100), 'idle');
-  assert.equal(await stops.press('t1', run, 9000), 'sent');
-  assert.deepEqual(sent, ['t1', 't2', 't1']);
+  assert.deepEqual(sent, ['t1', 't2']);
 });
 
-test('a Stop the Mac refuses, or never answers, is said and can be tried again', async () => {
+test('no second stop while the first is still on its way, however long that takes', async () => {
   const stops = makeStops<string>();
-  let n = 0;
-  const run = async () => `c${++n}`;
-  // Refused: the command comes back failed.
+  let sent = 0;
+  const run = async () => `c${++sent}`;
   await stops.press('t1', run, 0);
-  stops.saw('t1', { busy: true, command: { state: 'failed', note: 'no such turn' } });
-  assert.equal(stops.phase('t1', 100), 'failed');
+  // The Mac is offline: queued, never taken.
+  stops.saw('t1', { busy: true, command: { state: 'pending' } }, 100);
+  assert.equal(stops.phase('t1', STOP_WAIT_MS - 1), 'stopping');
+  assert.equal(stops.phase('t1', STOP_WAIT_MS), 'queued', 'said as queued, not as something to press again');
+  assert.equal(await stops.press('t1', run, STOP_WAIT_MS + 5), 'ignored');
+  assert.equal(await stops.press('t1', run, 10 * STOP_WAIT_MS), 'ignored', 'a late retry could stop the next turn instead');
+  // Taken but not finished: still no second one.
+  stops.saw('t1', { busy: true, command: { state: 'taken' } }, 10 * STOP_WAIT_MS);
+  assert.equal(await stops.press('t1', run, 10 * STOP_WAIT_MS + 1), 'ignored');
+  // The row gains "needs you" or drops out of the lists: not known to have stopped.
+  stops.saw('t1', { command: { state: 'taken' } }, 10 * STOP_WAIT_MS + 2);
+  assert.equal(stops.phase('t1', 10 * STOP_WAIT_MS + 3), 'queued', 'a missing row keeps the latch');
+  assert.equal(sent, 1);
+});
+
+test('a new stop is allowed only once the first is over', async () => {
+  const stops = makeStops<string>();
+  let sent = 0;
+  const run = async () => `c${++sent}`;
+  // Done, and the thread seen stopped: over.
+  await stops.press('t1', run, 0);
+  stops.saw('t1', { busy: true, command: { state: 'done' } }, 500);
+  assert.equal(await stops.press('t1', run, 600), 'ignored', 'done but still reading as working: wait');
+  stops.saw('t1', { busy: false, command: { state: 'done' } }, 700);
+  assert.equal(stops.phase('t1', 800), 'idle');
+  assert.deepEqual(stops.pending(), [], 'and nothing is kept for it');
+  // Working again later: a new turn, a new stop.
+  assert.equal(await stops.press('t1', run, 5000), 'sent');
+  // Done, but the thread still reads as working long after: a new turn began.
+  stops.saw('t1', { busy: true, command: { state: 'done' } }, 6000);
+  stops.saw('t1', { busy: true, command: { state: 'done' } }, 6000 + STOP_WAIT_MS - 1);
+  assert.equal(await stops.press('t1', run, 6000 + STOP_WAIT_MS - 1), 'ignored');
+  stops.saw('t1', { busy: true, command: { state: 'done' } }, 6000 + STOP_WAIT_MS);
+  assert.equal(await stops.press('t1', run, 6001 + STOP_WAIT_MS), 'sent');
+  // Refused by the Mac: over, with the reason, and it can be pressed again.
+  stops.saw('t1', { busy: true, command: { state: 'failed', note: 'no such turn' } }, 6002 + STOP_WAIT_MS);
+  assert.equal(stops.phase('t1', 6003 + STOP_WAIT_MS), 'failed');
   assert.equal(stops.error('t1'), 'no such turn');
-  assert.equal(await stops.press('t1', run, 200), 'sent', 'failed can be pressed again');
-  assert.equal(stops.phase('t1', 300), 'stopping');
-  // Offline: queued, never taken, the row never changes.
-  stops.saw('t1', { busy: true, command: { state: 'pending' } });
-  assert.equal(stops.phase('t1', 200 + STOP_WAIT_MS - 1), 'stopping');
-  assert.equal(stops.phase('t1', 200 + STOP_WAIT_MS), 'unconfirmed', 'not stuck at Stopping for good');
-  assert.equal(await stops.press('t1', run, 200 + STOP_WAIT_MS + 5), 'sent', 'unconfirmed can be pressed again');
-  // Sending itself fails.
+  assert.equal(await stops.press('t1', run, 6004 + STOP_WAIT_MS), 'sent');
+  // Never queued at all (the send itself failed): the same.
   assert.equal(await stops.press('t2', async () => Promise.reject(new Error('offline')), 0), 'failed');
   assert.equal(stops.phase('t2', 1), 'failed');
-  assert.equal(stops.error('t2'), 'offline');
-  // The page hears each change.
+  assert.equal(await stops.press('t2', run, 2), 'sent');
+});
+
+test('the stops are for one sign-in: another clears them, and the page hears', async () => {
+  const stops = makeStops<string>();
   let heard = 0;
   const off = stops.subscribe(() => heard++);
-  stops.saw('t2', { busy: false });
-  assert.equal(heard, 1);
+  await stops.press('t1', async () => 'c1', 0);
+  await stops.press('t2', async () => 'c2', 0);
+  const before = heard;
+  stops.clear();
+  assert.deepEqual(stops.pending(), []);
+  assert.equal(stops.phase('t1', 1), 'idle');
+  assert.equal(heard, before + 1);
+  stops.clear();
+  assert.equal(heard, before + 1, 'nothing to clear: nothing said');
   off();
+});
+
+test('a draft is kept by thread across switches, and cleared by sending', () => {
+  const drafts = makeDrafts();
+  assert.equal(drafts.get('main'), '');
+  drafts.set('main', 'half a thought');
+  drafts.set('task', 'a note for the task');
+  // main -> task -> main, and task -> main -> task: each box gets its own back.
+  assert.equal(drafts.get('task'), 'a note for the task');
+  assert.equal(drafts.get('main'), 'half a thought');
+  // The thread drops out of the lists for a moment: nothing about the draft changes.
+  assert.equal(drafts.get('main'), 'half a thought');
+  // Sent: the box clears itself, which clears the draft.
+  drafts.set('main', '');
+  assert.equal(drafts.get('main'), '');
+  assert.equal(drafts.size(), 1, 'an empty draft is not kept');
+  drafts.clear();
+  assert.equal(drafts.get('task'), '', 'another sign-in starts with none');
+});
+
+test('the archived notice waits for the thread\'s own row to say so', () => {
+  const main = chat({ createdAt: '2026-11-01T00:00:00Z' });
+  // Missing from the lists (chatState says gone), its row not read yet: keep the chat.
+  assert.equal(chatState(JUNO, [], main.threadId).kind, 'gone');
+  assert.equal(goneConfirmed(JUNO, undefined), 'checking');
+  // Its row says it's still an open chat of this bot's: it was only a gap in the lists.
+  assert.equal(goneConfirmed(JUNO, main), 'still');
+  assert.equal(goneConfirmed(JUNO, { ...main, view: 'hibernating' }), 'still');
+  // Really archived, deleted, moved to another bot, or it turns out to be a task.
+  assert.equal(goneConfirmed(JUNO, { ...main, view: 'den', archivedAt: '2026-11-11T00:00:00Z' }), 'gone');
+  assert.equal(goneConfirmed(JUNO, null), 'gone');
+  assert.equal(goneConfirmed(JUNO, { ...main, projects: [{ id: 'wren' }] }), 'gone');
+  assert.equal(goneConfirmed(JUNO, task()), 'gone');
 });
 
 test('when the open chat is archived elsewhere, nothing is opened in its place until told', () => {

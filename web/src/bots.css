@@ -284,7 +284,7 @@
 .bots-task-line.failed { color: var(--b-danger); }
 .bots-task-line.working { color: var(--b-t2); }
 .bots-stop { flex: none; width: 28px; height: 28px; margin-right: 4px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--b-fill2); color: var(--b-t2); }
-.bots-stop:hover:not(:disabled) { background: var(--b-active); color: var(--b-t1); }
+button.bots-stop:hover { background: var(--b-active); color: var(--b-t1); }
 .bots-stop:focus-visible, .bots-to-main:focus-visible { outline: 2px solid var(--b-info); outline-offset: 1px; }
 .bots-stop svg { width: 12px; height: 12px; }
 .bots-card + .bots-label { margin-top: 18px; }
@@ -296,8 +296,5 @@
 .bots-to-main svg { width: 12px; height: 12px; }
 .bots-main.task .messages { padding-top: 44px; }
 
-/* The bot's chat and whatever is open over it (a task, another chat). */
-.bots-view { flex: 1; min-width: 0; min-height: 0; display: flex; }
-.bots-view.away { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
 .bots-more { width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: none; text-align: left; font-size: 12px; line-height: 16px; color: var(--b-t2); }
 .bots-more:hover { background: var(--b-hover); color: var(--b-t1); }
