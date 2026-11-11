@@ -34,3 +34,10 @@ Off by default. No backend, runner or Mac app code changed.
 | `web/mock/` | The site on made-up data with no backend, for looking at a page (dev server only) |
 | `runner/src/experiments/bots.md` | The experiment's file. Its `reminder` is a placeholder: no check-in schedule is booked |
 | `FORK.md` | This file |
+
+## Fixes to Mike's code, until his release has them
+
+| File | Change | Why |
+|---|---|---|
+| `runner/test/deploy/deploy.test.ts` | One line: the fake repo also gets `src/secure-url.ts` | Release 2026-11-11 made `convex-admin.ts` import it, and every deploy test failed without it. Drop this row once a release of Mike's copies it too |
+| `runner/src/adapters/codex/adapter.ts`, `runner/test/unit/codex-adapter.test.ts` | Codex's "until the project is trusted" config warning isn't raised as a notice | It showed in the error bar for every new folder (10 Nov 2026) |
