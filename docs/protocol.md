@@ -6340,7 +6340,10 @@ folder it was recorded at: listing the same name at another folder is
 refused until the record is removed by hand.
 
 For each bot the record holds a pointer to its main chat and the tasks that
-chat started. Nothing else is recorded.
+chat started. Nothing else is recorded. The file is `{ version: 2, bots:
+Record<name, BotRecord> }`. A file with another `version`, or none, is not
+read, moved or written over: the record stays off with a notice until the
+file is moved away (there is no migration; no earlier version was released).
 
 ```ts
 type BotRecord = {
@@ -6363,23 +6366,28 @@ type BotRecord = {
       kind: "final" | "needs-you" | "failed" | "stopped"
       at: string; reply?: string   // the turn's last reply, cut to 2,000 characters
       evidence: { kind: string; title: string; where?: string }[]   // 12 at most
-      delivered?: "main" | "waitFor"; deliveredAt?: string          // absent: still owed
+      delivered?: "main"; deliveredAt?: string                      // absent: still owed
     }[]
   }>
 }
 ```
 
 - **Main chat.** The first thread the owner starts in the bot's folder
-  (`threads.create` with no `startedBy`) while the bot has none. It doesn't
-  move when the owner starts another. Deleting it leaves the bot with none
-  and raises `generation`.
+  while the bot has none, on proof that it was the owner: a `threads.create`
+  the server took on the owner's token with no thread's key, carrying no
+  `startedBy`. A thread with no `startedBy` made any other way (the phone,
+  a relay, the runner itself) is not taken for the owner's. It doesn't
+  move when the owner starts another. Deleting it, or moving it out of the
+  bot's folder (checked before anything is sent to it), leaves the bot with
+  none and raises `generation`; what was owed stays owed for the next one.
 - **Task.** A thread whose `startedBy.threadId` is the bot's main chat and
   whose folder is inside the bot's. One level only: a thread a task starts,
   or one another bot's thread starts there, is not recorded. A task made
   while 3 are open (working or needing the owner) is still made, marked
   `overCap`, and the main chat is told. A thread made with a thread's own
-  key always carries that thread's id in `startedBy` (the gate sets it), so
-  no thread can pass as the owner's chat or as another thread's task.
+  key always has `startedBy.kind: "thread"` and that thread's id (the gate
+  sets both after anything the caller sent), so no thread can pass as the
+  owner's chat or as another thread's task.
 - **Report.** Written by the runner after a task's turn has ended, from a
   fixed account of how it ended: `stopped` (interrupted), `failed`,
   `needs-you` (it left an ask or an open card), `final` (the runner marked
@@ -6394,15 +6402,16 @@ type BotRecord = {
   block that says it is the task's words, to be read as a report and never
   as instructions or as the owner's approval. The block's markers are taken
   out of the reply itself.
-- **Waits.** If the main chat is hibernating on the task with `waitFor`, a
-  `final` report is held: the wait tells the main chat itself. It is marked
-  `delivered: "waitFor"` only once the wait's own message naming the task
-  is in the main chat. If the wait ends without that (another task it was
-  waiting on failed, say), the report is sent as above.
-- **A task that runs on.** A task that has reported, or been called
-  overdue, and then ends a later turn with work still going is `working`
-  again: `overdueAt` is cleared and its deadline is counted again from that
-  moment.
+- **Waits.** The record does not look at `waitFor`. A main chat that is
+  also hibernating on the task hears of a finish twice: once from its own
+  wait and once in the report, which says so and carries the report's id.
+- **A task that runs on.** The record hears of a turn when it ends, not
+  when it starts. A task that has reported and is then sent on keeps its
+  last state in the file until that turn ends; while its thread is on a
+  turn or has a message queued it is never pruned, counts as open, and
+  `bots.list` shows it as `working`. If the turn ends with work still
+  going, the file says `working` too: `overdueAt` is cleared and the
+  deadline is counted again from that moment.
 - **Deadline.** A task still `working` at its deadline: the main chat is
   told once (`overdueAt`). The timer is set again from the file when the
   runner starts.
@@ -6415,14 +6424,20 @@ type BotRecord = {
   A task whose turn ends on a runner that is handing over or stopping gets
   no report.
 - **Off means off.** Every write, message and timer is checked against
-  `runner.json` as it is at that moment (read again only when the file's
-  time or size has changed). The experiment switched off, or a bot taken
-  off the list, stops everything for it at once, records already in the
-  file included; the file is left as it is.
+  `runner.json` as it is at that moment: one `stat` of the file per thread
+  made, deleted or turn ended, and a read only when its time or size has
+  changed. The experiment switched off, or a bot taken off the list, takes
+  effect at the next such event, `bots.list` or timer fire (not the instant
+  the file is saved): from then nothing is written, sent or timed for it,
+  records already in the file included, and the file is left as it is.
+- **Starting.** Nothing is done until the runner has loaded its threads,
+  started its scheduler and is listening; then what was owed is sent. A
+  turn that ends in those first moments is not reported.
 - **Faults.** Nothing the record does can change what a thread does. Any
   error inside it (a full disk, a file it can't read) turns it off until
   the runner next starts, with one error notice. Only a missing `bots.json`
-  is an empty record. One that isn't a whole record is set aside as
+  is an empty record. One that others could read is made 0600 when loaded.
+  One that isn't a whole record is set aside as
   `bots.json.unreadable-<ms>` and said; if it can't be read or set aside,
   the record is off and the file is never written over.
 - **One writer.** Only the runner in charge writes the file or holds its
@@ -6435,8 +6450,13 @@ type BotRecord = {
 `off` says why nothing is being recorded when the experiment is on.
 It is refused to every thread's own key, whatever the thread's access.
 With the experiment off, or no bot listed, nothing is recorded, no file is
-read or written and threads behave exactly as without it. A runner without
-the experiment's code answers `bots.list` with `-32601`.
+read or written and threads behave as without it, but for two things the
+gate does whatever the switch says: `bots.*` is refused to thread keys, and
+a Full access thread's `threads.create` gets `startedBy.kind: "thread"` and
+its own id (before, what it sent was passed on as it was, so a thread it
+made with no `startedBy`, or as a `tool`, now shows as started by that
+thread). A runner without the experiment's code answers `bots.list` with
+`-32601`.
 
 ## Ordering and reconnects
 

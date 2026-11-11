@@ -14,11 +14,12 @@
 //
 // This runs inside the runner that carries every thread, so two things come
 // before anything it does:
-// - Off means off, at once. Every entry point, every delivery and every
-//   timer checks first that the experiment is on now, that this runner is
-//   the one in charge (not one finishing turns after a handover), and that
-//   the bot is listed now. If not: no write, no message, no timer, also for
-//   tasks already in the file.
+// - Off means off. Every entry point, every delivery and every timer checks
+//   first that the experiment is on now, that this runner is the one in
+//   charge (not one finishing turns after a handover), and that the bot is
+//   listed now. If not: no write, no message, no timer, also for tasks
+//   already in the file. A change to runner.json is seen at the next thread
+//   event, bots.list or timer fire, not the instant the file is saved.
 // - A fault here never reaches a thread. Every entry point is contained: if
 //   anything throws (a full disk, a file that can't be read), the module
 //   turns itself off for the rest of the run, says so once, and the runner
@@ -127,7 +128,7 @@ export function readManaged(runnerJson: unknown, real: (p: string) => string | u
 
 export type ReportKind = 'final' | 'needs-you' | 'failed' | 'stopped';
 const KINDS: ReadonlySet<string> = new Set(['final', 'needs-you', 'failed', 'stopped']);
-const DELIVERED: ReadonlySet<string> = new Set(['main', 'waitFor']);
+const DELIVERED: ReadonlySet<string> = new Set(['main']);
 export type Evidence = { kind: string; title: string; where?: string };
 /** One turn of a task ending, as the runner saw it. Written once and never changed, but for where it was delivered. */
 export type BotReport = {
@@ -138,9 +139,8 @@ export type BotReport = {
   reply?: string;
   // What the runner itself found the task made: reported, not verified.
   evidence: Evidence[];
-  // Where it went: the main chat by this record, or the main chat's own
-  // waitFor (seen in what that wait sent it). Absent: not delivered yet.
-  delivered?: 'main' | 'waitFor';
+  // Sent to the main chat by this record. Absent: not delivered yet.
+  delivered?: 'main';
   deliveredAt?: string;
 };
 export type BotTask = {
@@ -168,7 +168,9 @@ export type BotRecord = {
   main?: { threadId: string; generation: number };
   tasks: Record<string, BotTask>;
 };
-export type BotsState = { version: 1; bots: Record<string, BotRecord> };
+// The file's shape has a number. This code reads and writes one, and leaves a file with any other alone.
+export const BOTS_VERSION = 2;
+export type BotsState = { version: typeof BOTS_VERSION; bots: Record<string, BotRecord> };
 
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const isStr = (x: unknown): x is string => typeof x === 'string';
@@ -200,7 +202,7 @@ export function parseState(text: string): BotsState | undefined {
   } catch {
     return undefined;
   }
-  if (!isObject(data) || data.version !== 1 || !isObject(data.bots)) return undefined;
+  if (!isObject(data) || data.version !== BOTS_VERSION || !isObject(data.bots)) return undefined;
   for (const [key, bot] of Object.entries(data.bots)) {
     if (!isObject(bot) || bot.name !== key || !isStr(bot.folder) || !isNum(bot.generation) || !optStr(bot.projectId) || !isObject(bot.tasks)) return undefined;
     if (bot.main !== undefined && (!isObject(bot.main) || !isStr(bot.main.threadId) || !isNum(bot.main.generation))) return undefined;
@@ -266,20 +268,25 @@ export function reportText(task: { threadId: string }, report: BotReport): strin
     `Status: ${STATUS[report.kind]}`,
     `Evidence (found by Threadbear in the task's own record; reported, not verified):\n${evidence}`,
     `What would unblock it: ${unblock[report.kind]}`,
-    `Report ${report.id}`,
+    `Report ${report.id}${report.kind === 'final' ? '. If this chat was waiting on the task with waitFor, that wait has told it of this finish too: it is the same result, not a second one.' : ''}`,
     `${REPLY_BEGINS}\n${reply ? cut(reply, REPLY_CHARS) : '(it gave no reply)'}\n${REPLY_ENDS}`,
   ].join('\n');
 }
 
 /** The tasks that count against the cap: still working, or waiting on the owner. */
-export const openTasks = (bot: BotRecord) => Object.entries(bot.tasks).filter(([, t]) => t.state === 'working' || t.state === 'needs-you');
+export const openTasks = (bot: BotRecord, busy: (threadId: string) => boolean = () => false) => Object.entries(bot.tasks).filter(([id, t]) => t.state === 'working' || t.state === 'needs-you' || busy(id));
 
 const pending = (task: BotTask) => task.reports.filter((r) => !r.delivered);
 
-/** Finished tasks past what's kept: all but the newest few, and any older than a while. One with a report still to deliver always stays. */
-export function prunable(bot: BotRecord, now: number): string[] {
+/**
+ * Finished tasks past what's kept: all but the newest few, and any older
+ * than a while. One with a report still to deliver always stays, and so
+ * does one whose thread is on a turn or has a message queued (`busy`): it
+ * reported and was then sent on, and its record says so only when that turn ends.
+ */
+export function prunable(bot: BotRecord, now: number, busy: (threadId: string) => boolean = () => false): string[] {
   const done = Object.entries(bot.tasks)
-    .filter(([, t]) => ['final', 'failed', 'stopped'].includes(t.state) && !pending(t).length)
+    .filter(([id, t]) => ['final', 'failed', 'stopped'].includes(t.state) && !pending(t).length && !busy(id))
     .sort(([, a], [, b]) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt));
   return done.filter(([, t], i) => i >= DONE_TASKS_KEPT || now - Date.parse(t.lastActivityAt) > DONE_TASK_DAYS * 86_400_000).map(([id]) => id);
 }
@@ -289,10 +296,10 @@ export function prunable(bot: BotRecord, now: number): string[] {
 export type ThreadView = {
   id: string;
   archived: boolean;
-  turnRunning: boolean;
-  // The threads it has hibernated to wait on (end_turn's waitFor) for any
-  // finish, heard from or not: gone once it wakes.
-  waitsOn: string[];
+  // On a turn, or with a message queued for its next one.
+  busy: boolean;
+  // The folder it runs in now: a thread can be moved.
+  cwd: string;
 };
 
 export type BotsHost = {
@@ -310,8 +317,6 @@ export type BotsHost = {
   thread(threadId: string): ThreadView | undefined;
   /** Sends a message from the runner to a thread, queued behind any turn it is on. False if it couldn't. */
   tell(threadId: string, text: string, why: string): boolean;
-  /** Whether that thread's own waitFor has already sent it this task's finish, since then. */
-  waitDelivered(mainThreadId: string, taskThreadId: string, since: string): boolean;
   evidence(threadId: string): Evidence[];
   projectFor(folder: string): string | undefined;
   /** Shown to the user, as the runner's other subsystems say what went wrong. */
@@ -349,7 +354,7 @@ export function runnerHost(runner: () => Runner, home: string, clock: Clock, log
       const st = runner().threads.get(threadId);
       if (!st || st.rt.deleted) return undefined;
       const { rec, rt } = st;
-      return { id: rec.id, archived: Boolean(rec.archivedAt), turnRunning: Boolean(rt.turn), waitsOn: (rec.waitingOn ?? []).filter((w) => !w.until).map((w) => w.threadId) };
+      return { id: rec.id, archived: Boolean(rec.archivedAt), busy: Boolean(rt.turn) || rec.queue.length > 0, cwd: rec.cwd };
     },
     tell(threadId, text, why) {
       const r = runner();
@@ -362,17 +367,6 @@ export function runnerHost(runner: () => Runner, home: string, clock: Clock, log
       }
       r.sendTo(st, text, [], { origin: 'runner', queue: true });
       return true;
-    },
-    waitDelivered(mainThreadId, taskThreadId, since) {
-      // What a wait that's over sends (hibernation.ts, deliverWaits) names each
-      // thread it waited on. Looked for in what's queued for the main chat and
-      // in its newest messages, so "delivered" means it was really sent.
-      const st = runner().threads.get(mainThreadId);
-      if (!st) return false;
-      const names = (text: string) => text.includes('hibernated to wait on') && text.includes(`(thread ${taskThreadId.slice(0, 8)})`);
-      if (st.rec.queue.some((q) => q.origin === 'runner' && names(q.text))) return true;
-      const log = runner().store.log(mainThreadId);
-      return log.read(Math.max(1, log.lastSeq - 60), log.lastSeq).some((e) => e.type === 'user.message' && e.origin === 'runner' && e.ts >= since && names(e.text));
     },
     evidence(threadId) {
       try {
@@ -405,6 +399,10 @@ export class Bots {
   // Why it turned itself off for the rest of this run, if it did.
   private broken?: string;
   private stopped = false;
+  // Nothing is done before start(): the runner calls it once what a message can reach is up (main.ts).
+  private started = false;
+  // runner.json changed since the timer was set: it was dropped, and is set again at the next way in.
+  private rearm = false;
 
   constructor(host: BotsHost) {
     this.host = host;
@@ -424,13 +422,18 @@ export class Bots {
     if (this.settings?.stamp === stamp) return this.settings;
     const on = this.host.on();
     const { managed, refused } = on ? readManaged(this.host.runnerJson(), this.host.real) : { managed: [], refused: [] };
+    // Whatever timer was set under the old settings goes now: a bot may be off the list.
+    if (this.settings) {
+      this.quiet();
+      this.rearm = true;
+    }
     this.settings = { stamp, on, managed, refused };
     return this.settings;
   }
 
   /** Whether anything may be done right now: not broken, not stopped, in charge, switched on, with a bot listed. */
   private live(): boolean {
-    if (this.broken || this.stopped || !this.host.primary()) return false;
+    if (this.broken || this.stopped || !this.started || !this.host.primary()) return false;
     const s = this.current();
     return s.on && s.managed.length > 0;
   }
@@ -446,29 +449,47 @@ export class Bots {
    * run and says so once; nothing reaches the caller.
    */
   private enter(what: string, fn: () => void): void {
-    if (this.broken || this.stopped) return;
+    if (this.broken || this.stopped || !this.started) return;
     try {
       if (!this.live()) {
         this.quiet();
         return;
       }
       fn();
+      if (this.rearm) this.settle();
       if (this.dirty) this.save();
     } catch (e) {
       this.fail(what, e);
     }
   }
 
+  /** Drops the timer. Can't throw: it runs on the way out of a failure, and as the runner stops. */
   private quiet(): void {
-    this.timer?.cancel();
+    const timer = this.timer;
     this.timer = undefined;
+    try {
+      timer?.cancel();
+    } catch {
+      /* a timer that won't cancel still does nothing when it fires: every way in checks first */
+    }
   }
 
+  /** Turns the module off for the rest of the run, and says so. Each step stands alone, so none failing stops the next, and nothing here can throw. */
   private fail(what: string, e: unknown): void {
-    this.broken = `${what}: ${e instanceof Error ? e.message : String(e)}`;
+    let why = 'an error that could not be read';
+    try {
+      why = e instanceof Error ? e.message : String(e);
+    } catch {
+      /* an error whose own message throws */
+    }
+    this.broken = `${what}: ${why}`;
     this.quiet();
     try {
-      this.host.log?.warn('bots turned itself off', { what, error: String(e) });
+      this.host.log?.warn('bots turned itself off', { what, error: why });
+    } catch {
+      /* the log failing must not cost the notice below */
+    }
+    try {
       this.host.error(`Bots are off until the runner next starts: ${this.broken}. Your threads are not affected, but bots' tasks are not being recorded or reported.`);
     } catch {
       /* saying so must not throw either */
@@ -489,6 +510,20 @@ export class Bots {
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
+    if (text !== undefined) {
+      // A file from another version of this code (or with no version at
+      // all) is not this version's to read, move or write over: the module
+      // stays off until someone has looked.
+      let version: unknown;
+      try {
+        version = (JSON.parse(text) as { version?: unknown } | null)?.version;
+      } catch {
+        version = BOTS_VERSION; // not JSON at all: a cut-off write, set aside below
+      }
+      if (version !== BOTS_VERSION) throw new Error(`bots.json is ${version === undefined ? 'of no stated version' : `version ${JSON.stringify(version)}`} and this runner reads version ${BOTS_VERSION}, so it was left as it is. Move it away to start an empty record`);
+      // Readable by the owner only, also if it was made some other way.
+      if ((fs.statSync(this.file).mode & 0o777) !== 0o600) fs.chmodSync(this.file, 0o600);
+    }
     let state = text === undefined ? undefined : parseState(text);
     if (text !== undefined && !state) {
       const aside = `${this.file}.unreadable-${this.host.clock.now()}`;
@@ -496,7 +531,7 @@ export class Bots {
       this.host.log?.warn('bots.json was not a whole record and was set aside', { aside });
       this.host.error(`bots.json could not be read as a record, so it was set aside as ${path.basename(aside)} and bots start from an empty one.`);
     }
-    state ??= { version: 1, bots: {} };
+    state ??= { version: BOTS_VERSION, bots: {} };
     this.taskBot.clear();
     for (const bot of Object.values(state.bots)) for (const id of Object.keys(bot.tasks)) this.taskBot.set(id, bot.name);
     this.state = state;
@@ -512,8 +547,14 @@ export class Bots {
     this.dirty = false;
   }
 
-  /** Sets the deadline timer again from the file. Called once the runner's threads are loaded. */
+  /**
+   * Sets the deadline timer again from the file and sends what was owed.
+   * Until this is called nothing here does anything: the runner calls it
+   * last, once its threads are loaded and everything a message to a thread
+   * can reach (the scheduler, the server) is up.
+   */
   start(): void {
+    this.started = true;
     this.enter('starting', () => {
       this.load();
       this.settle();
@@ -526,8 +567,9 @@ export class Bots {
     this.quiet();
   }
 
+
   /** A thread was made (Runner.create): the bot's main chat, one of its tasks, or neither. */
-  created(rec: { id: string; cwd: string; createdAt: string; startedBy?: { kind: string; threadId?: string } }): void {
+  created(rec: { id: string; cwd: string; createdAt: string; startedBy?: { kind: string; threadId?: string } }, byOwner = false): void {
     this.enter('recording a new thread', () => {
       const cwd = this.host.real(rec.cwd) ?? rec.cwd;
       const managed = this.current().managed.find((b) => insideFolder(cwd, b.folder));
@@ -538,18 +580,21 @@ export class Bots {
       if (had && had.folder !== managed.folder) return;
       const parent = rec.startedBy?.kind === 'thread' ? rec.startedBy.threadId : undefined;
       // The owner's own chat is the bot's main chat if it has none (and
-      // nothing if it has one, whatever the owner starts next). A thread
-      // its main chat started is a task. Anything else in the folder (a
-      // task's own helper, another bot's thread, a schedule's) is neither,
-      // and is not recorded: one level only.
-      const role = !rec.startedBy ? (had?.main ? undefined : 'main') : parent && had?.main && parent === had.main.threadId ? 'task' : undefined;
+      // nothing if it has one, whatever the owner starts next). It is the
+      // owner's only on proof: the server took the call on the owner's own
+      // token with no thread's key (`byOwner`), and nothing says anyone
+      // else started it. A thread with no word on who started it is not
+      // taken for the owner's. A thread its main chat started is a task.
+      // Anything else in the folder (a task's own helper, another bot's
+      // thread, a schedule's) is neither, and is not recorded: one level only.
+      const role = byOwner && !rec.startedBy ? (had?.main ? undefined : 'main') : parent && had?.main && parent === had.main.threadId ? 'task' : undefined;
       if (!role) return;
       const bot = (state.bots[managed.name] ??= { name: managed.name, folder: managed.folder, generation: 1, tasks: {} });
       const projectId = this.host.projectFor(managed.folder);
       if (projectId) bot.projectId = projectId;
       if (role === 'main') bot.main = { threadId: rec.id, generation: bot.generation };
       else if (parent && bot.main) {
-        const over = openTasks(bot).length >= OPEN_TASK_CAP;
+        const over = openTasks(bot, this.busy).length >= OPEN_TASK_CAP;
         bot.tasks[rec.id] = {
           parentThreadId: parent,
           generation: bot.main.generation,
@@ -561,11 +606,12 @@ export class Bots {
           reports: [],
         };
         this.taskBot.set(rec.id, bot.name);
-        if (over) {
-          this.host.tell(bot.main.threadId, `From Threadbear: this bot already had ${OPEN_TASK_CAP} tasks open, which is its limit, and thread ${rec.id.slice(0, 8)} was started as another. It was started anyway and is recorded as over the limit. Finish or stop a task before starting more.`, 'a task over the limit');
+        const main = over ? this.mainOf(bot) : undefined;
+        if (main) {
+          this.host.tell(main.id, `From Threadbear: this bot already had ${OPEN_TASK_CAP} tasks open, which is its limit, and thread ${rec.id.slice(0, 8)} was started as another. It was started anyway and is recorded as over the limit. Finish or stop a task before starting more.`, 'a task over the limit');
         }
       }
-      for (const id of prunable(bot, this.host.clock.now())) {
+      for (const id of prunable(bot, this.host.clock.now(), this.busy)) {
         delete bot.tasks[id];
         this.taskBot.delete(id);
       }
@@ -602,8 +648,7 @@ export class Bots {
         }
         this.dirty = true;
       }
-      // This task's report, and any still owed: one held for a wait that has
-      // since gone, one there was no main chat to tell.
+      // This task's report, and any still owed for want of a main chat to tell.
       this.settle();
     });
   }
@@ -635,6 +680,7 @@ export class Bots {
    */
   private settle(): void {
     this.quiet();
+    this.rearm = false;
     const now = this.host.clock.now();
     let next: number | undefined;
     const soonest = (at: number) => (next = next === undefined ? at : Math.min(next, at));
@@ -650,9 +696,10 @@ export class Bots {
         }
         const view = this.host.thread(threadId);
         const minutes = Math.round((at - Date.parse(task.createdAt)) / 60_000);
-        const text = `From Threadbear: one of this bot's tasks, thread ${threadId.slice(0, 8)}, has not reported by its deadline (${minutes} min after it started).\nStatus: overdue, ${view ? (view.turnRunning ? 'still working' : 'no turn running (it may be waiting on a job in the background)') : 'its thread has gone'}\nWhat would unblock it: read_thread ${threadId.slice(0, 8)} to see where it is, then wait, send it a message, or stop it with interrupt_thread.`;
+        const text = `From Threadbear: one of this bot's tasks, thread ${threadId.slice(0, 8)}, has not reported by its deadline (${minutes} min after it started).\nStatus: overdue, ${view ? (view.busy ? 'still working' : 'no turn running (it may be waiting on a job in the background)') : 'its thread has gone'}\nWhat would unblock it: read_thread ${threadId.slice(0, 8)} to see where it is, then wait, send it a message, or stop it with interrupt_thread.`;
         // Told once. With no main chat to tell, it stays to be told.
-        if (bot.main && this.host.tell(bot.main.threadId, text, 'a task is overdue')) {
+        const main = this.mainOf(bot);
+        if (main && this.host.tell(main.id, text, 'a task is overdue')) {
           task.overdueAt = this.iso();
           this.dirty = true;
         } else soonest(now + RETRY_MS);
@@ -661,39 +708,51 @@ export class Bots {
     if (next !== undefined) this.timer = this.host.clock.setTimeout(() => this.enter('a deadline', () => this.settle()), Math.min(TIMER_MAX_MS, Math.max(0, next - now)));
   }
 
+  private busy = (threadId: string): boolean => Boolean(this.host.thread(threadId)?.busy);
+
   /**
-   * Sends one report to the bot's main chat, unless that chat's own waitFor
-   * has sent it or is still going to. True once it's delivered, or held for
-   * a wait (which is looked at again at the next turn end anywhere).
+   * The bot's main chat, if there is one to tell now: not gone, not
+   * archived, and still in the bot's folder. One that has been moved out of
+   * the folder is no longer this bot's chat: the pointer is cleared (the
+   * owner's next chat in the folder becomes it) and what was owed stays owed.
+   */
+  private mainOf(bot: BotRecord): ThreadView | undefined {
+    const main = bot.main ? this.host.thread(bot.main.threadId) : undefined;
+    if (!main || main.archived) return undefined;
+    if (!insideFolder(this.host.real(main.cwd) ?? main.cwd, bot.folder)) {
+      delete bot.main;
+      bot.generation += 1;
+      this.dirty = true;
+      return undefined;
+    }
+    return main;
+  }
+
+  /**
+   * Sends one report to the bot's main chat, always, by the pointer. A main
+   * chat that was also waiting on the task with waitFor hears of a finish
+   * from that wait as well; the report says so, and carries its id. True
+   * once it's delivered.
    */
   private deliver(bot: BotRecord, threadId: string, report: BotReport): boolean {
     if (report.delivered) return true;
-    const main = bot.main ? this.host.thread(bot.main.threadId) : undefined;
-    if (!bot.main || !main || main.archived) return false;
-    if (report.kind === 'final') {
-      // Its finish reached the main chat in what the wait sent: told once.
-      if (this.host.waitDelivered(main.id, threadId, report.at)) {
-        report.delivered = 'waitFor';
-        report.deliveredAt = this.iso();
-        this.dirty = true;
-        return true;
-      }
-      // The main chat is still hibernating on it, with others: the wait
-      // will carry it. If the wait goes without doing so, it's sent here.
-      if (main.waitsOn.includes(threadId)) return true;
-    }
-    if (!this.host.tell(main.id, reportText({ threadId }, report), 'a task reported')) return false;
+    const main = this.mainOf(bot);
+    if (!main || !this.host.tell(main.id, reportText({ threadId }, report), 'a task reported')) return false;
     report.delivered = 'main';
     report.deliveredAt = this.iso();
     this.dirty = true;
-    // That may have woken the main chat out of a wait that was holding other reports: they go now.
-    for (const [otherId, other] of Object.entries(bot.tasks)) if (otherId !== threadId) for (const r of pending(other)) this.deliver(bot, otherId, r);
     return true;
   }
 
-  /** What the record holds, for bots.list. Read-only: it writes nothing and sets no timer. */
+  /**
+   * What the record holds, for bots.list. It is also a moment runner.json
+   * is looked at: switched off or a bot delisted, the timer goes; changed
+   * otherwise, what's owed is worked out again. A task whose thread is on
+   * a turn or has a message queued shows as working, whatever it last reported.
+   */
   list(): BotsList {
     const none: BotsList = { on: false, managed: [], refused: [], bots: [] };
+    this.enter('listing', () => {});
     try {
       if (this.broken) return { ...none, off: this.broken };
       const s = this.current();
@@ -704,7 +763,11 @@ export class Bots {
       const state = this.load();
       for (const bot of Object.values(state.bots)) {
         const again = s.managed.find((m) => m.name === bot.name);
-        if (this.listed(bot)) out.bots.push({ ...structuredClone(bot), openTasks: openTasks(bot).length });
+        if (this.listed(bot)) {
+          const copy = structuredClone(bot);
+          for (const [id, task] of Object.entries(copy.tasks)) if (this.busy(id)) task.state = 'working';
+          out.bots.push({ ...copy, openTasks: openTasks(bot, this.busy).length });
+        }
         else if (again) out.refused.push({ folder: again.folder, why: `the bot called ${bot.name} is on record at ${bot.folder}` });
       }
       return out;

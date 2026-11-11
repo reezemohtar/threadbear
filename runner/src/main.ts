@@ -360,7 +360,6 @@ async function main(): Promise<void> {
   const kept = await peers.connectAll();
   elsewhere = peersElsewhere(peers);
   runner.start({ skip: kept });
-  runner.bots?.start();
   // Answers to ask_secret go after a day (docs/protocol.md, "Secrets").
   runner.secrets.startSweeping((e) => log.warn('secret sweep failed', { error: String(e) }));
   // After the threads are loaded, so a schedule that came due while the
@@ -995,6 +994,8 @@ async function main(): Promise<void> {
   // Tests read this line to know the runner is up.
   process.stdout.write(`threadbear-runner listening on ${port}\n`);
   tellLaunchListening();
+  // Last, as a report owed from before the restart is a message to a thread: everything that can reach is up by now.
+  runner.bots?.start();
   // Checks start a minute after this; installs never while a restart waits.
   updates.start();
   extraUpdates.start();

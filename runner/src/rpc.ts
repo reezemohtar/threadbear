@@ -624,6 +624,7 @@ export class RpcServer {
           ...(p.unconfine === true ? { unconfine: true } : {}),
           ...optStartedBy(p),
           ...optProjectIds(p),
+          ...(conn.caller === undefined ? { byOwner: true as const } : {}),
         });
         return { thread: res.thread, turnId: res.turnId };
       }

@@ -121,7 +121,7 @@ export class CallerGate {
     // Bots (bots.ts, a fork's experiment): its record is closed to every thread's key, whatever the thread's access, and a
     // thread made with a key always says which thread made it, so none can pass as the owner's own chat or as another's task.
     if (method.startsWith('bots.')) throw new RpcError(ErrorCode.notAllowed, "The bots record isn't open to a thread's own key.");
-    if (method === 'threads.create' && caller.mode === 'full' && !caller.confined) return { ...p, startedBy: { kind: 'thread', label: 'Agent', ...(p.startedBy && typeof p.startedBy === 'object' ? (p.startedBy as Params) : {}), threadId } };
+    if (method === 'threads.create' && caller.mode === 'full' && !caller.confined) return { ...p, startedBy: { label: 'Agent', ...(p.startedBy && typeof p.startedBy === 'object' ? (p.startedBy as Params) : {}), kind: 'thread', threadId } };
     if (caller.mode === 'full' && !caller.confined) return p;
     if (GATED_READS.has(method)) return p;
     const who = caller.confined ? 'This thread runs in a sandbox' : `This thread is on ${MODE_NAMES[caller.mode]}`;

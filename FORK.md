@@ -72,8 +72,8 @@ tested against).
 ### Existing files edited
 
 Every line is added beside an existing line of the same kind; nothing is
-moved or reformatted. The list is as it stands after the five-lens review's
-fixes (the first commit's one line in `endTurn` is gone).
+moved or reformatted. The list is as it stands after the first skeptic
+round's fixes (the first commit's one line in `endTurn` is gone).
 
 | File | Lines added | Why |
 |---|---|---|
@@ -84,13 +84,15 @@ fixes (the first commit's one line in `endTurn` is gone).
 | `runner/src/runner.ts` | In `completeTurn`, after the `markFinished` line: `this.bots?.turnEnded({ threadId: rec.id, turnId: turn.turnId, outcome, needsYou: said?.needs === 'you' \|\| rec.status === 'waiting', finished: finished && !review && !rec.labReviewOwed, reply: turn.lastText });` | Told after the turn's own bookkeeping and its waits, with a fixed account of how it ended |
 | `runner/src/runner.ts` | In `failTurn`, after `this.endTurn(...)`: `this.bots?.turnEnded({ threadId: rec.id, turnId: turn.turnId, outcome: interrupted ? 'interrupted' : 'failed', needsYou: false, finished: false, reply: turn.lastText });` | The same, for a turn that was stopped or failed |
 | `runner/src/runner.ts` | `this.bots?.deleted(threadId);` in `delete`, after `this.waitedOnDeleted(threadId);` | A deleted thread leaves the record |
-| `runner/src/runner/new-threads.ts` | `this.bots?.created(st.rec);` in `create`, after `makeThread` | A new thread is classed as the main chat, a task or neither |
+| `runner/src/runner/new-threads.ts` | `this.bots?.created(st.rec, params.byOwner === true);` in `create`, after `makeThread` | A new thread is classed as the main chat, a task or neither |
+| `runner/src/runner/new-threads.ts` | `byOwner?: true;` with a one-line comment, last in `create`'s params | Proof the call came on the owner's token: only then can a thread become a bot's main chat |
 | `runner/src/main.ts` | `import { Bots, runnerHost } from './bots.ts';` after the `Projects` import | Built here |
 | `runner/src/main.ts` | `bots: new Bots(runnerHost(() => runner, cfg.home, realClock, log)),` in `new Runner({...})`, after `projects,` | Built and handed in |
-| `runner/src/main.ts` | `runner.bots?.start();` after `runner.start({ skip: kept });` | Deadline timers are set again from the file |
+| `runner/src/main.ts` | `runner.bots?.start();` with a one-line comment, after `tellLaunchListening();` | Started last: a report owed from before a restart is a message to a thread, so the scheduler and the server are up first |
 | `runner/src/main.ts` | `runner.bots?.stop();` twice: in `shutdown` after `scheduler.stop();`, and in `handOver` after `scheduler.stop();` | A runner that is stopping or has handed over writes nothing more and holds no timer |
 | `runner/src/rpc.ts` | `case 'bots.list': return r.bots?.list() ?? { on: false, managed: [], refused: [], bots: [] };` (two lines) after `pools.list` | The read-only look at the record |
-| `runner/src/rpc-gate.ts` | In `CallerGate.check`, just before the line that passes a Full access thread: a two-line comment, `if (method.startsWith('bots.')) throw ...notAllowed`, and one line that returns `threads.create`'s params with `startedBy.threadId` set to the calling thread for a Full access key | The record is closed to every thread's key, and no thread can make one that passes as the owner's chat or as another thread's task. **This line acts with the experiment off too**: a Full access thread's `threads.create` now always carries its own id in `startedBy` (the threadbear tools and `tb` already sent it) |
+| `runner/src/rpc.ts` | `...(conn.caller === undefined ? { byOwner: true as const } : {}),` last in `threads.create`'s call to `r.create` | Says the call was the owner's (the token, no thread's key) |
+| `runner/src/rpc-gate.ts` | In `CallerGate.check`, just before the line that passes a Full access thread: a two-line comment, `if (method.startsWith('bots.')) throw ...notAllowed`, and one line that returns `threads.create`'s params with `startedBy.kind` set to `thread` and `startedBy.threadId` to the calling thread, after whatever the caller sent, for a Full access key (as the lines below already do for the other modes) | The record is closed to every thread's key, and no thread can make one that passes as the owner's chat or as another thread's task. **Both act with the experiment off too.** `bots.*` is a reserved name thread keys are refused. And a Full access thread's `threads.create` always shows as started by that thread: before, what it sent was passed on, so one that left `startedBy` out showed no byline and one that said `kind: "tool"` (`tb new --from` run inside a thread) showed as that tool. Someone using the ordinary app could notice those rows now say they were started by the agent's thread |
 | `web/src/bots.test.ts` | Two imports and one test | The website's copy of the folder rule is tested against the shared cases |
 | `docs/protocol.md`, `docs/on-your-mac.md`, `docs/experiments.md` (generated) | The Bots section and method row; the new file; the experiment's text | Repo rules |
 

@@ -275,7 +275,8 @@ File references are where to look.
   `bots.json` in its data folder, readable only by you (mode 0600): each
   managed bot's main chat, the threads that chat started, their deadlines
   and the reports written when their turns ended (the last reply, cut to
-  2,000 characters, and the names and paths of files it made). A
+  2,000 characters, and the names and paths of files it made). One it
+  finds readable by others is made private. A
   `bots.json` it can't make sense of is renamed
   `bots.json.unreadable-<time>` beside it, and stays until you delete it.
   When a thread is made, deleted or ends a turn it looks at `runner.json`'s

@@ -48,6 +48,8 @@ export const newThreadsPart = {
     // Projects it starts in (New Thread on a project's page), joined
     // before its first turn, so that turn already has the project's brief.
     projectIds?: string[];
+    // Bots (bots.ts, a fork's experiment): the server took this call on the owner's own token, with no thread's key.
+    byOwner?: true;
   }): { thread: ThreadSummary; turnId: string } {
     if (!params.text && !params.images?.length) throw new RpcError(ErrorCode.badParams, 'text or images required');
     checkImages(params.images ?? []);
@@ -59,7 +61,7 @@ export const newThreadsPart = {
       for (const p of projectIds) projects.get(p);
     }
     const { st, notes } = this.makeThread(params);
-    this.bots?.created(st.rec);
+    this.bots?.created(st.rec, params.byOwner === true);
     if (projectIds.length) this.projects!.changeMembership(st.rec.id, { add: projectIds, by: 'mike' });
     const turnId = this.sendTo(st, params.text ?? '', params.images ?? [], { origin: params.origin, scheduleId: params.scheduleId });
     // Under the first turn, so they read as part of starting it.
