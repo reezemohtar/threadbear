@@ -281,6 +281,10 @@ test("the page's code failing to arrive is told apart from a fault in the page",
   assert.equal(isLoadFailure(Object.assign(new Error('Loading chunk 7 failed'), { name: 'ChunkLoadError' })), true);
   assert.equal(isLoadFailure(new TypeError("Cannot read properties of undefined (reading 'title')")), false);
   assert.equal(isLoadFailure(new Error('boom')), false);
+  // A query or a picture failing to fetch is not the page's code failing to load.
+  assert.equal(isLoadFailure(new TypeError('Failed to fetch')), false);
+  assert.equal(isLoadFailure(new TypeError('Load failed')), false);
+  assert.equal(isLoadFailure(new TypeError('error loading dynamically imported module: http://x/assets/bots-page.js')), true);
   assert.equal(isLoadFailure('a string'), false);
   assert.equal(isLoadFailure(null), false);
 });

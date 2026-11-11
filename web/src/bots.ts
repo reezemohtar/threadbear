@@ -217,7 +217,7 @@ export function liveOf(answer: BotProject | null | Error | undefined): { state: 
 export function isLoadFailure(error: unknown): boolean {
   const e = error as { name?: unknown; message?: unknown } | null;
   const text = `${typeof e?.name === 'string' ? e.name : ''} ${typeof e?.message === 'string' ? e.message : String(error)}`;
-  return /ChunkLoadError|dynamically imported module|Importing a module script failed|Failed to fetch|Load failed|Unable to preload/i.test(text);
+  return /ChunkLoadError|dynamically imported module|Importing a module script failed|Unable to preload/i.test(text);
 }
 
 /**
